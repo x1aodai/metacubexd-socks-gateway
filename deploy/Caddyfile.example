@@ -1,0 +1,18 @@
+gateway.example.com {
+    encode zstd gzip
+
+    handle_path /mihomo/* {
+        forward_auth 127.0.0.1:8080 {
+            uri /api/auth/check
+        }
+        reverse_proxy 127.0.0.1:9090 {
+            # Start Caddy with CLASH_SECRET set to the contents of
+            # deploy/secrets/clash_secret.
+            header_up Authorization "Bearer {env.CLASH_SECRET}"
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8080
+    }
+}

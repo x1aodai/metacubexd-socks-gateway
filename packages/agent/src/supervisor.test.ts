@@ -1,3 +1,4 @@
+import type { CreateSupervisorOptions, SupervisorDeps } from './supervisor'
 import type { SupervisorOptions } from './types'
 import { Buffer } from 'node:buffer'
 import { EventEmitter } from 'node:events'
@@ -5,7 +6,17 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { createSupervisor } from './supervisor'
+import { createSupervisor as createSupervisorBase } from './supervisor'
+
+// Most lifecycle assertions exercise POSIX signal handling. Pin that platform
+// explicitly so the upstream suite remains deterministic on Windows hosts;
+// the dedicated win32 case below still overrides this dependency.
+function createSupervisor(
+  opts: CreateSupervisorOptions,
+  deps: SupervisorDeps = {},
+) {
+  return createSupervisorBase(opts, { platform: 'linux', ...deps })
+}
 
 // Minimal ChildProcess double: stdout/stderr emitters + kill spy + emit-exit helper.
 class FakeProc extends EventEmitter {

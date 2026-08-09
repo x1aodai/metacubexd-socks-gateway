@@ -28,7 +28,7 @@ RUN pnpm --filter @metacubexd/server... build
 # ---- Stage 3: fetch the TARGET-arch mihomo kernel (normal stage = real TARGETARCH) ----
 FROM alpine:3.20 AS kernel
 ARG TARGETARCH
-ARG MIHOMO_VERSION=v1.19.27
+ARG MIHOMO_VERSION=v1.19.29
 RUN apk add --no-cache curl ca-certificates gzip
 RUN set -eux; \
     if   [ "$TARGETARCH" = "amd64" ]; then ASSET=mihomo-linux-amd64-compatible-${MIHOMO_VERSION}.gz; \
@@ -52,11 +52,14 @@ ENV NODE_ENV=production \
     UI_DIST=/app/ui-dist \
     MIHOMO_BIN=/usr/local/bin/mihomo \
     DATA_DIR=/data \
+    NITRO_HOST=127.0.0.1 \
     CONTROL_PORT=8080 \
     CLASH_API_PORT=9090 \
-    MIXED_PORT=7890
+    MIXED_PORT=0 \
+    SOCKS_PORT_MIN=1080 \
+    SOCKS_PORT_MAX=1099
 VOLUME ["/data"]
-EXPOSE 8080 9090 7890
+EXPOSE 8080 9090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- "http://127.0.0.1:${CONTROL_PORT}/api/control/health" || exit 1
 # tini is PID 1 so the mihomo subprocess spawned by the server is reaped on kill/restart.

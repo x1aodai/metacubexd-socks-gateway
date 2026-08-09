@@ -9,7 +9,7 @@ import type {
 import { spawn as nodeSpawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import treeKillDefault from 'tree-kill'
 import { parse } from 'yaml'
 
@@ -216,13 +216,17 @@ export function createSupervisor(
       .split('\n')
       .filter((line) => !shouldStripTopLevelKey(line))
       .join('\n')
+    const transformed = opts.configTransform
+      ? await opts.configTransform(kept)
+      : kept
     const header = [
       `external-controller: ${state.externalController}`,
       `secret: ${state.secret}`,
       ...(mixedPort != null ? [`mixed-port: ${mixedPort}`] : []),
       '',
     ].join('\n')
-    await writeFile(opts.activeConfigPath, header + kept)
+    await writeFile(opts.activeConfigPath, header + transformed)
+    await chmod(opts.activeConfigPath, 0o600)
   }
 
   function cancelStabilityReset(): void {

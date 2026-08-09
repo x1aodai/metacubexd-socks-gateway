@@ -16,6 +16,7 @@ logs
 .env
 .env.*
 !.env.example
+deploy/secrets/
 
 # IDE / Editor
 .idea

@@ -1,0 +1,48 @@
+# The gateway application listens only on 127.0.0.1. Terminate HTTPS here and
+# replace gateway.example.com with your own host. WebSocket headers are needed
+# for traffic, connection and log streams.
+server {
+    listen 443 ssl http2;
+    server_name gateway.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/gateway.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/gateway.example.com/privkey.pem;
+
+    client_max_body_size 8m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+
+    # Session validation for the controller proxy. Keep this internal so it
+    # cannot be used as a public authentication oracle.
+    location = /_gateway_auth {
+        internal;
+        proxy_pass http://127.0.0.1:8080/api/auth/check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-Original-URI $request_uri;
+    }
+
+    # The UI uses this same-origin path for Mihomo HTTP and WebSocket APIs.
+    # Replace the placeholder with the value in deploy/secrets/clash_secret.
+    location /mihomo/ {
+        auth_request /_gateway_auth;
+        proxy_pass http://127.0.0.1:9090/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization "Bearer REPLACE_WITH_CLASH_SECRET";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+}

@@ -22,10 +22,10 @@ function validatePort(port: string): string {
 const PORT = validatePort(process.env.PORT || '4199')
 const BASE_URL = `http://localhost:${PORT}`
 const NITRO_CONFIG_PATH = resolve(process.cwd(), '.output/nitro.json')
-const NITRO_CHUNK_PATH = resolve(
-  process.cwd(),
-  '.output/server/chunks/nitro/nitro.mjs',
-)
+const NITRO_CHUNK_PATHS = [
+  resolve(process.cwd(), '.output/server/chunks/nitro/nitro.mjs'),
+  resolve(process.cwd(), '.output/server/chunks/_/nitro.mjs'),
+]
 const SERVER_ENTRY_PATH = resolve(process.cwd(), '.output/server/index.mjs')
 const PAGE_LOAD_TIMEOUT = 30000
 const ELEMENT_TIMEOUT = 10000
@@ -61,18 +61,31 @@ async function ensurePreviewBuild() {
   const hasMockBuild =
     existsSync(NITRO_CONFIG_PATH) &&
     existsSync(SERVER_ENTRY_PATH) &&
-    existsSync(NITRO_CHUNK_PATH) &&
-    readFileSync(NITRO_CHUNK_PATH, 'utf8').includes('"mockMode": true')
+    NITRO_CHUNK_PATHS.some(
+      (path) =>
+        existsSync(path) &&
+        readFileSync(path, 'utf8').includes('"mockMode": true'),
+    )
 
   if (hasMockBuild) {
     return
   }
 
   console.log('Mock preview build not found. Building Nuxt app for e2e...')
-  await runCommand('pnpm', ['exec', 'nuxt', 'build'], {
-    ...process.env,
-    MOCK_MODE: 'true',
-  })
+  const packageManagerCli = process.env.npm_execpath
+
+  if (!packageManagerCli) {
+    throw new Error('npm_execpath is unavailable; cannot build the E2E fixture')
+  }
+
+  await runCommand(
+    process.execPath,
+    [packageManagerCli, 'exec', 'nuxt', 'build'],
+    {
+      ...process.env,
+      MOCK_MODE: 'true',
+    },
+  )
 }
 
 async function waitForServer(timeout = SERVER_READY_TIMEOUT): Promise<void> {
@@ -152,6 +165,20 @@ async function stopServer(server: ChildProcess): Promise<void> {
   })
 }
 
+async function launchBrowser() {
+  try {
+    return await chromium.launch({ headless: true })
+  } catch (error) {
+    // Local Windows contributors often have system Chrome but not the
+    // Playwright-managed browser cache. CI still uses the pinned browser.
+    if (process.platform === 'win32') {
+      return chromium.launch({ channel: 'chrome', headless: true })
+    }
+
+    throw error
+  }
+}
+
 describe('e2E Page Tests', () => {
   let server: ChildProcess | null = null
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
@@ -180,10 +207,11 @@ describe('e2E Page Tests', () => {
     await waitForServer()
 
     // Launch browser
-    browser = await chromium.launch({ headless: true })
+    browser = await launchBrowser()
     context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
       deviceScaleFactor: 1,
+      locale: 'en-US',
     })
     page = await context.newPage()
 

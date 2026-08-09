@@ -1,4 +1,4 @@
-export default defineNuxtRouteMiddleware((to) => {
+export default defineNuxtRouteMiddleware(async (to) => {
   // Skip middleware on server
   if (import.meta.server) return
 
@@ -8,17 +8,33 @@ export default defineNuxtRouteMiddleware((to) => {
     return
   }
 
-  const endpointStore = useEndpointStore()
-  const hasEndpoint = !!endpointStore.currentEndpoint
-
-  // The landing ('/') is the connection entry and '/setup' manages backends —
-  // both stay reachable without a configured endpoint (and this avoids a
-  // redirect loop when we send no-endpoint users to '/').
-  if (to.path === '/' || to.path === '/setup') {
+  // The all-in-one server requires one administrator session for the complete
+  // dashboard. A standalone/static deployment has no auth endpoint; the probe
+  // reports `unavailable` and existing endpoint navigation continues unchanged.
+  const gatewayAuth = useGatewayAuth()
+  const state = await gatewayAuth.check(
+    gatewayAuth.state.value !== 'unavailable',
+  )
+  if (to.path !== '/login' && state === 'unauthenticated') {
+    return navigateTo(
+      { path: '/login', query: { redirect: to.fullPath } },
+      { replace: true },
+    )
+  }
+  if (to.path === '/login') {
+    if (state === 'authenticated') {
+      return navigateTo('/gateway', { replace: true })
+    }
     return
   }
 
-  // Redirect to the connection entry if no endpoint is configured
+  const endpointStore = useEndpointStore()
+  const hasEndpoint = !!endpointStore.currentEndpoint
+
+  if (to.path === '/' || to.path === '/setup' || to.path === '/gateway') {
+    return
+  }
+
   if (!hasEndpoint) {
     return navigateTo('/', { replace: true })
   }

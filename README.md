@@ -4,6 +4,12 @@
 
 **Mihomo Dashboard, The Official One, XD**
 
+> **Gateway fork:** this branch adds a managed, fixed SOCKS5 gateway with a
+> dedicated Web console, multiple credentials, safe subscription import,
+> fail-closed outbound groups, revisions and administrator authentication.
+> Start with the [Chinese deployment guide](docs/gateway-deployment.zh-CN.md).
+> Prebuilt images: `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`.
+
 A modern, beautiful, and fully-featured web dashboard for [Mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta).
 
 [![stars](https://img.shields.io/github/stars/metacubex/metacubexd?style=for-the-badge&color=orange)](https://github.com/metacubex/metacubexd/stargazers)

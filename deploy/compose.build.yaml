@@ -1,0 +1,8 @@
+services:
+  gateway:
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+      args:
+        MIHOMO_VERSION: v1.19.29

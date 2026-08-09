@@ -19,16 +19,20 @@ export function useConnect() {
   const probeState = ref<'idle' | 'probing' | 'unreachable'>('idle')
   const probeTarget = ref('')
 
-  // Priority: runtime config (NUXT_PUBLIC_DEFAULT_BACKEND_URL) > config.js > fallback
+  // Priority: explicit runtime/config.js URL > all-in-one same-origin Mihomo
+  // proxy > legacy local fallback. The serverMode marker prevents a standalone
+  // static panel from incorrectly assuming its host exposes /mihomo.
   const defaultBackendURL = computed(() => {
     if (runtimeConfig.public.defaultBackendURL) {
       return runtimeConfig.public.defaultBackendURL as string
     }
-    if (
-      typeof window !== 'undefined' &&
-      (window as any).__METACUBEXD_CONFIG__?.defaultBackendURL
-    ) {
-      return (window as any).__METACUBEXD_CONFIG__.defaultBackendURL as string
+    if (typeof window !== 'undefined') {
+      const deployConfig = (window as any).__METACUBEXD_CONFIG__ as
+        { defaultBackendURL?: string; serverMode?: boolean } | undefined
+      if (deployConfig?.defaultBackendURL) return deployConfig.defaultBackendURL
+      if (deployConfig?.serverMode) {
+        return `${window.location.origin.replace(/\/$/, '')}/mihomo`
+      }
     }
     return FALLBACK_BACKEND_URL
   })

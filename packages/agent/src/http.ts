@@ -1,5 +1,7 @@
 import type { ConfigPatchV1 } from '@metacubexd/config-editor'
 import type { App, H3Event } from 'h3'
+import type { GatewayManager } from './gateway'
+import type { GatewaySubscriptionManager } from './gateway-subscriptions'
 import type { ProfileConfigEditor } from './profile-editor'
 import type {
   KernelLogLine,
@@ -22,10 +24,12 @@ import {
   getQuery,
   getRouterParam,
   readBody,
+  readMultipartFormData,
   sendNoContent,
   setResponseHeader,
   setResponseStatus,
 } from 'h3'
+import { GatewayValidationError } from './gateway'
 import { fetchGeoAssets } from './kernel/geo'
 import { ConfigPatchConflictError } from './merge'
 import {
@@ -77,6 +81,8 @@ export interface ControlRouterDeps {
   geoFetch?: typeof fetch // override for tests; defaults to global fetch
   createWebdavClient?: typeof defaultCreateWebdavClient // override for tests
   readFile?: typeof defaultReadFile // override for tests; defaults to fs/promises readFile
+  gateway?: GatewayManager
+  gatewaySubscriptions?: GatewaySubscriptionManager
 }
 
 const PREFIX = '/api/control'
@@ -98,7 +104,24 @@ export function createControlRouter(deps: ControlRouterDeps): App {
     geoFetch,
     createWebdavClient = defaultCreateWebdavClient,
     readFile = defaultReadFile,
+    gateway,
+    gatewaySubscriptions,
   } = deps
+
+  async function withGatewayError<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await action()
+    } catch (error) {
+      if (error instanceof GatewayValidationError) {
+        throw createError({
+          statusCode: error.statusCode,
+          statusMessage: error.message,
+          data: { error: error.message },
+        })
+      }
+      throw error
+    }
+  }
 
   // ---- Auth middleware: applied to every route except public ones. ----
   function isPublic(path: string): boolean {
@@ -135,6 +158,208 @@ export function createControlRouter(deps: ControlRouterDeps): App {
     `${PREFIX}/info`,
     defineEventHandler(() => info()),
   )
+
+  // ---- Managed fixed SOCKS gateway (server capability) ----
+  if (gateway) {
+    router.get(
+      `${PREFIX}/gateway`,
+      defineEventHandler(() => gateway.getGateway()),
+    )
+    router.put(
+      `${PREFIX}/gateway`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          enabled?: boolean
+          port?: number
+          udp?: boolean
+        }
+        return withGatewayError(() => gateway.updateGateway(body))
+      }),
+    )
+    router.get(
+      `${PREFIX}/gateway/status`,
+      defineEventHandler(() => gateway.status()),
+    )
+    router.get(
+      `${PREFIX}/gateway/credentials`,
+      defineEventHandler(async () => ({
+        items: await gateway.listCredentials(),
+      })),
+    )
+    router.post(
+      `${PREFIX}/gateway/credentials`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          username: string
+          password?: string
+          enabled?: boolean
+        }
+        return withGatewayError(() => gateway.createCredential(body))
+      }),
+    )
+    router.put(
+      `${PREFIX}/gateway/credentials/:id`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          username?: string
+          enabled?: boolean
+        }
+        return withGatewayError(() =>
+          gateway.updateCredential(getRouterParam(event, 'id')!, body),
+        )
+      }),
+    )
+    router.delete(
+      `${PREFIX}/gateway/credentials/:id`,
+      defineEventHandler(async (event) => {
+        await withGatewayError(() =>
+          gateway.deleteCredential(getRouterParam(event, 'id')!),
+        )
+        return sendNoContent(event)
+      }),
+    )
+    router.post(
+      `${PREFIX}/gateway/credentials/:id/rotate`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event).catch(() => ({}))) as {
+          password?: string
+        }
+        return withGatewayError(() =>
+          gateway.rotateCredential(getRouterParam(event, 'id')!, body.password),
+        )
+      }),
+    )
+    router.put(
+      `${PREFIX}/gateway/outbound`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          mode: 'manual' | 'auto' | 'failover'
+          nodeId?: string
+        }
+        return withGatewayError(() => gateway.setOutbound(body))
+      }),
+    )
+    router.get(
+      `${PREFIX}/revisions`,
+      defineEventHandler(async () => ({
+        items: await gateway.listRevisions(),
+      })),
+    )
+    router.post(
+      `${PREFIX}/revisions/:id/rollback`,
+      defineEventHandler((event) =>
+        withGatewayError(() => gateway.rollback(getRouterParam(event, 'id')!)),
+      ),
+    )
+    router.get(
+      `${PREFIX}/audit`,
+      defineEventHandler(async (event) => ({
+        items: await gateway.listAudit(Number(getQuery(event).limit ?? 100)),
+      })),
+    )
+  }
+
+  if (gatewaySubscriptions) {
+    async function subscriptionAction<T>(
+      action: () => Promise<T> | T,
+    ): Promise<T> {
+      try {
+        return await action()
+      } catch (error) {
+        if (error instanceof GatewayValidationError)
+          return withGatewayError(() => Promise.reject(error))
+        const message = error instanceof Error ? error.message : String(error)
+        throw createError({
+          statusCode: 502,
+          statusMessage: 'subscription operation failed',
+          data: {
+            error: message
+              .replace(/https?:\/\/\S+/gi, '[REDACTED URL]')
+              .slice(0, 500),
+          },
+        })
+      }
+    }
+
+    router.post(
+      `${PREFIX}/import/preview`,
+      defineEventHandler(async (event) => {
+        const type = getHeader(event, 'content-type') ?? ''
+        let content = ''
+        if (type.toLowerCase().includes('multipart/form-data')) {
+          const parts = await readMultipartFormData(event)
+          const file = parts?.find((part) => part.name === 'file')
+          if (!file?.data) throw new GatewayValidationError('file is required')
+          content = file.data.toString('utf8')
+        } else {
+          const body = (await readBody(event)) as { content?: string }
+          content = body?.content ?? ''
+        }
+        return subscriptionAction(() =>
+          gatewaySubscriptions.previewImport(content),
+        )
+      }),
+    )
+    router.post(
+      `${PREFIX}/import/apply`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          previewId?: string
+          content?: string
+        }
+        return subscriptionAction(() => gatewaySubscriptions.applyImport(body))
+      }),
+    )
+    router.get(
+      `${PREFIX}/subscriptions`,
+      defineEventHandler(async () => ({
+        items: await gatewaySubscriptions.list(),
+      })),
+    )
+    router.post(
+      `${PREFIX}/subscriptions`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          name: string
+          url: string
+          intervalMinutes?: number
+          enabled?: boolean
+        }
+        return subscriptionAction(() => gatewaySubscriptions.create(body))
+      }),
+    )
+    router.put(
+      `${PREFIX}/subscriptions/:id`,
+      defineEventHandler(async (event) => {
+        const body = (await readBody(event)) as {
+          name?: string
+          url?: string
+          intervalMinutes?: number
+          enabled?: boolean
+        }
+        return subscriptionAction(() =>
+          gatewaySubscriptions.update(getRouterParam(event, 'id')!, body),
+        )
+      }),
+    )
+    router.delete(
+      `${PREFIX}/subscriptions/:id`,
+      defineEventHandler(async (event) => {
+        await subscriptionAction(() =>
+          gatewaySubscriptions.delete(getRouterParam(event, 'id')!),
+        )
+        return sendNoContent(event)
+      }),
+    )
+    router.post(
+      `${PREFIX}/subscriptions/:id/sync`,
+      defineEventHandler((event) =>
+        subscriptionAction(() =>
+          gatewaySubscriptions.sync(getRouterParam(event, 'id')!),
+        ),
+      ),
+    )
+  }
 
   // ---- Kernel ----
   router.get(

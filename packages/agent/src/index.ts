@@ -1,3 +1,4 @@
+import type { GatewayManagerOptions } from './gateway'
 import type { ScriptRunner } from './script'
 import type { CreateSupervisorOptions } from './supervisor'
 import type {
@@ -5,6 +6,8 @@ import type {
   SystemProxyController,
   TunController,
 } from './types'
+import { createGatewayManager } from './gateway'
+import { createGatewaySubscriptionManager } from './gateway-subscriptions'
 import { createControlRouter } from './http'
 import { MIHOMO_VERSION } from './kernel/assets'
 import { createProfileConfigEditor } from './profile-editor'
@@ -16,6 +19,26 @@ import { createSupervisor } from './supervisor'
 
 export const AGENT_VERSION = '0.0.0'
 
+export { AdminAuthError, createAdminAuth } from './admin-auth'
+export type { AdminAuth, AdminAuthOptions, AdminSession } from './admin-auth'
+export { createGatewayManager, GatewayValidationError } from './gateway'
+export type {
+  GatewayConfig,
+  GatewayCredential,
+  GatewayManager,
+  GatewayManagerOptions,
+  GatewayMode,
+  GatewayNode,
+  GatewayRevision,
+  GatewayStatus,
+} from './gateway'
+export { createGatewaySubscriptionManager } from './gateway-subscriptions'
+export type {
+  GatewayImportPreview,
+  GatewaySubscription,
+  GatewaySubscriptionManager,
+  GatewaySubscriptionManagerOptions,
+} from './gateway-subscriptions'
 export { createControlRouter } from './http'
 export type { ControlRouterDeps } from './http'
 export { MIHOMO_VERSION, mihomoAsset } from './kernel/assets'
@@ -48,12 +71,6 @@ export type {
   ScriptRun,
   ScriptRunner,
 } from './script'
-export { createSupervisor } from './supervisor'
-export type { CreateSupervisorOptions, SupervisorDeps } from './supervisor'
-export { buildTunConfig, TunPreconditionError } from './tun'
-export * from './types'
-export { createWebdavClient } from './webdav'
-export type { WebdavClient, WebdavClientOptions } from './webdav'
 
 export type CreateAgentOptions = CreateSupervisorOptions & {
   profilesDir: string
@@ -64,6 +81,7 @@ export type CreateAgentOptions = CreateSupervisorOptions & {
   systemProxy?: SystemProxyController // OS proxy controller; enables 'system-proxy'
   kernelManager?: KernelManager // kernel version mgmt; enables 'kernel-version'
   tunController?: TunController // TUN mode controller; enables 'tun'
+  gateway?: Omit<GatewayManagerOptions, 'activeConfigPath' | 'controllerUrl'>
 }
 
 export interface AgentInfo {
@@ -83,7 +101,26 @@ export function createAgent(opts: CreateAgentOptions) {
     // feature works across every Runtime Form (server/desktop) out of the box.
     scriptRunner: opts.scriptRunner ?? createScriptRunner(),
   })
-  const supervisor = createSupervisor(opts)
+  const gateway = opts.gateway
+    ? createGatewayManager({
+        ...opts.gateway,
+        activeConfigPath: opts.activeConfigPath,
+        controllerUrl: opts.externalController ?? '127.0.0.1:9090',
+        controllerSecret: opts.secret,
+      })
+    : undefined
+  const supervisor = createSupervisor({
+    ...opts,
+    ...(gateway ? { configTransform: gateway.overlayConfig } : {}),
+  })
+  gateway?.bindSupervisor(supervisor)
+  const gatewaySubscriptions = gateway
+    ? createGatewaySubscriptionManager({
+        dataDir: opts.gateway!.dataDir,
+        masterKey: opts.gateway!.masterKey,
+        gateway,
+      })
+    : undefined
   const profileEditor = createProfileConfigEditor({
     profiles,
     supervisor,
@@ -116,6 +153,10 @@ export function createAgent(opts: CreateAgentOptions) {
       // Config-section editor reads/writes top-level keys of the active profile.
       'config-sections',
       'visual-config-editor',
+      ...(gateway ? ['socks-gateway'] : []),
+      ...(gatewaySubscriptions
+        ? ['gateway-subscriptions', 'gateway-import']
+        : []),
       ...(systemProxy ? ['system-proxy'] : []),
       ...(kernelManager ? ['kernel-version'] : []),
       ...(tunController ? ['tun'] : []),
@@ -132,6 +173,8 @@ export function createAgent(opts: CreateAgentOptions) {
     systemProxy,
     kernelManager,
     tunController,
+    gateway,
+    gatewaySubscriptions,
   })
   // Wire the auto-update scheduler to the same profiles store. NOT started here
   // — the server boot plugin starts it (the desktop builds its own scheduler so
@@ -164,5 +207,14 @@ export function createAgent(opts: CreateAgentOptions) {
     systemProxy,
     kernelManager,
     tunController,
+    gateway,
+    gatewaySubscriptions,
   }
 }
+
+export { createSupervisor } from './supervisor'
+export type { CreateSupervisorOptions, SupervisorDeps } from './supervisor'
+export { buildTunConfig, TunPreconditionError } from './tun'
+export * from './types'
+export { createWebdavClient } from './webdav'
+export type { WebdavClient, WebdavClientOptions } from './webdav'

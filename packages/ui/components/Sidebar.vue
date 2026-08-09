@@ -16,6 +16,7 @@ import {
   IconReload,
   IconRoute,
   IconRuler,
+  IconServerBolt,
   IconServerCog,
   IconSettings,
 } from '@tabler/icons-vue'
@@ -50,6 +51,11 @@ const navItems = computed(() => {
   // manages (kernel lifecycle, version/geo, system proxy, network sections,
   // runtime config, WebDAV backup). Hidden in the plain web dashboard.
   if (hasAgent.value) {
+    items.push({
+      href: '/gateway',
+      name: t('gateway.title'),
+      icon: IconServerBolt,
+    })
     items.push({
       href: '/control',
       name: t('controlCenter'),

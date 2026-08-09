@@ -1,0 +1,53 @@
+name: metacubexd-gateway
+
+services:
+  gateway:
+    image: '${GATEWAY_IMAGE:-ghcr.io/x1aodai/metacubexd-socks-gateway:latest}'
+    pull_policy: always
+    container_name: metacubexd-gateway
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      NITRO_HOST: 127.0.0.1
+      CONTROL_PORT: '8080'
+      CLASH_API_PORT: '9090'
+      MIXED_PORT: '0'
+      SOCKS_PORT_MIN: '${SOCKS_PORT_MIN:-1080}'
+      SOCKS_PORT_MAX: '${SOCKS_PORT_MAX:-1099}'
+      SESSION_COOKIE_SECURE: '${SESSION_COOKIE_SECURE:-true}'
+      TRUSTED_PROXY: '${TRUSTED_PROXY:-127.0.0.1}'
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      GATEWAY_MASTER_KEY_FILE: /run/secrets/gateway_master_key
+      CONTROL_TOKEN_FILE: /run/secrets/control_token
+      CLASH_SECRET_FILE: /run/secrets/clash_secret
+      TZ: '${TZ:-Asia/Shanghai}'
+    secrets:
+      - admin_password
+      - gateway_master_key
+      - control_token
+      - clash_secret
+    volumes:
+      - gateway-data:/data
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/api/control/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+secrets:
+  admin_password:
+    file: ./secrets/admin_password
+  gateway_master_key:
+    file: ./secrets/gateway_master_key
+  control_token:
+    file: ./secrets/control_token
+  clash_secret:
+    file: ./secrets/clash_secret
+
+volumes:
+  gateway-data:

@@ -23,6 +23,9 @@ export interface SupervisorOptions {
   maxRestarts?: number // consecutive auto-restarts before giving up; default 3
   restartBackoffMs?: number // delay before each auto-restart; default 1_000
   stableRestartMs?: number // running this long resets the crash counter; default 30_000
+  // Server-only managed overlays (for example the fixed SOCKS gateway) are
+  // applied immediately before every spawn, after profile composition.
+  configTransform?: (content: string) => string | Promise<string>
 }
 
 export interface KernelLogLine {

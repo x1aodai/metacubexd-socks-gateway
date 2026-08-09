@@ -8,8 +8,8 @@ import { join } from 'node:path'
 import { toNodeListener } from 'h3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createControlRouter } from './http'
-import { SubscriptionFetchError } from './profiles'
 import { ProfileEditorConflictError } from './profile-editor'
+import { SubscriptionFetchError } from './profiles'
 import { TunPreconditionError } from './tun'
 
 function fakeState(over: Partial<KernelState> = {}): KernelState {
@@ -112,8 +112,20 @@ function makeDeps(token?: string) {
 async function mount(deps: ReturnType<typeof makeDeps>) {
   const app = createControlRouter(deps as never)
   const server = createServer(toNodeListener(app))
-  await new Promise<void>((r) => server.listen(0, r))
-  const { port } = server.address() as AddressInfo
+  let port = 0
+  // Windows can allocate port 6000 for listen(0), which WHATWG fetch rejects
+  // as an unsafe port before the request reaches this local test server.
+  // Retry the blocked ports that can occur in an unprivileged ephemeral range.
+  const blockedPorts = new Set([
+    1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061, 6000, 6566, 6697, 10080,
+  ])
+  do {
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    port = (server.address() as AddressInfo).port
+    if (blockedPorts.has(port) || (port >= 6665 && port <= 6669)) {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  } while (blockedPorts.has(port) || (port >= 6665 && port <= 6669))
   return {
     base: `http://127.0.0.1:${port}`,
     close: () => new Promise<void>((r) => server.close(() => r())),

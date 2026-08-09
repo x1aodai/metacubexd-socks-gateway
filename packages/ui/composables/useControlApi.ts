@@ -17,6 +17,7 @@ import type {
 } from '~/types/control'
 // packages/ui/composables/useControlApi.ts
 import ky from 'ky'
+import { getGatewayCsrfToken } from './useGatewayApi'
 
 // Profile validation can trigger Mihomo's first-run GEO database download.
 // Keep ordinary control requests on the client's 15s default. These finite
@@ -71,7 +72,23 @@ export function useControlApi() {
   if (token) headers.Authorization = `Bearer ${token}`
   // ky v2: use `prefix` (prefixUrl was renamed in v2). All method paths below
   // are passed WITHOUT a leading slash so ky joins them cleanly.
-  const client = ky.create({ prefix: base, headers, timeout: 15000 })
+  const client = ky.create({
+    prefix: base,
+    headers,
+    timeout: 15000,
+    credentials: 'include',
+    hooks: {
+      beforeRequest: [
+        ({ request }) => {
+          if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+            return
+          }
+          const csrfToken = getGatewayCsrfToken()
+          if (csrfToken) request.headers.set('X-CSRF-Token', csrfToken)
+        },
+      ],
+    },
+  })
 
   return {
     base,

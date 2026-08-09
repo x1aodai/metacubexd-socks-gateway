@@ -33,6 +33,10 @@ describe('apps/server lib/supervisor', () => {
     delete process.env.CLASH_SECRET
     delete process.env.CONTROL_TOKEN
     delete process.env.GITHUB_TOKEN
+    delete process.env.ADMIN_PASSWORD
+    delete process.env.ADMIN_PASSWORD_FILE
+    delete process.env.GATEWAY_MASTER_KEY
+    delete process.env.GATEWAY_MASTER_KEY_FILE
     const { serverEnv } = await import('../supervisor')
     const env = serverEnv()
     expect(env.controlPort).toBe(8080)
@@ -41,6 +45,8 @@ describe('apps/server lib/supervisor', () => {
     expect(env.dataDir).toBe('/data')
     expect(env.mihomoBin).toBe('/usr/local/bin/mihomo')
     expect(env.githubToken).toBe('')
+    expect(env.socksPortMin).toBe(1080)
+    expect(env.socksPortMax).toBe(1099)
   })
 
   it('honours overridden ports/paths from env', async () => {
@@ -65,7 +71,7 @@ describe('apps/server lib/supervisor', () => {
     process.env.MIHOMO_BIN = '/usr/local/bin/mihomo'
     process.env.CLASH_API_PORT = '9090'
     process.env.CLASH_SECRET = 'clash-x'
-    process.env.CONTROL_TOKEN = 'agent-tok'
+    process.env.GATEWAY_MASTER_KEY = 'gateway-key'
     const { getAgent } = await import('../supervisor')
     const a = getAgent()
     const b = getAgent()
@@ -76,10 +82,18 @@ describe('apps/server lib/supervisor', () => {
     expect(opts.homeDir).toBe('/data')
     expect(opts.profilesDir).toBe('/data/profiles')
     expect(opts.activeConfigPath).toBe('/data/active.yaml')
-    expect(opts.agentToken).toBe('agent-tok')
-    expect(opts.externalController).toBe('0.0.0.0:9090')
+    expect(opts.agentToken).toBeUndefined()
+    expect(opts.externalController).toBe('127.0.0.1:9090')
     expect(opts.secret).toBe('clash-x')
-    // MIXED_PORT must reach the supervisor or the published 7890 stays closed (#2067).
-    expect(opts.mixedPort).toBe(7890)
+    expect(opts.mixedPort).toBeUndefined()
+    expect(opts.gateway).toEqual(
+      expect.objectContaining({
+        dataDir: '/data',
+        masterKey: 'gateway-key',
+        defaultPort: 1080,
+        minPort: 1080,
+        maxPort: 1099,
+      }),
+    )
   })
 })

@@ -1,5 +1,5 @@
-import { createError, defineEventHandler, getQuery, getRequestHeader } from 'h3'
-import { serverEnv } from '../lib/supervisor'
+import { createError, defineEventHandler, getCookie, getHeader } from 'h3'
+import { getAuth, SESSION_COOKIE } from '../lib/auth'
 
 const CONTROL_PREFIX = '/api/control'
 const PUBLIC_CONTROL_PATHS = new Set([`${CONTROL_PREFIX}/health`])
@@ -15,10 +15,9 @@ export type AuthResult =
   { ok: true } | { ok: false; status: number; message: string }
 
 /**
- * Pure auth decision. Static UI (anything not under /api/control) is public.
- * /api/control/health is public. Every other /api/control/** request requires
- * a matching token via `Authorization: Bearer <token>` OR (for SSE, which
- * cannot set headers in EventSource) a `?token=<token>` query param.
+ * Legacy pure token decision retained for compatibility tests and embedded
+ * agent clients. The all-in-one web server middleware below uses the
+ * administrator session cookie and CSRF token instead.
  */
 export function isAuthorized(input: AuthInput): AuthResult {
   const { path, authHeader, queryToken, configuredToken } = input
@@ -64,17 +63,17 @@ function isWhitespace(char: string): boolean {
   return char.trim() === ''
 }
 
-export default defineEventHandler((event) => {
-  const result = isAuthorized({
-    path: event.path.split('?')[0] ?? event.path,
-    authHeader: getRequestHeader(event, 'authorization'),
-    queryToken: (getQuery(event).token as string | undefined) ?? undefined,
-    configuredToken: serverEnv().controlToken,
-  })
-  if (!result.ok) {
-    throw createError({
-      statusCode: result.status,
-      statusMessage: result.message,
-    })
+export default defineEventHandler(async (event) => {
+  const path = event.path.split('?')[0] ?? event.path
+  if (!path.startsWith(CONTROL_PREFIX) || PUBLIC_CONTROL_PATHS.has(path)) return
+  const session = await getAuth().authenticate(getCookie(event, SESSION_COOKIE))
+  if (!session)
+    throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(event.method)) {
+    if (getHeader(event, 'x-csrf-token') !== session.csrfToken)
+      throw createError({
+        statusCode: 403,
+        statusMessage: 'Invalid CSRF token',
+      })
   }
 })

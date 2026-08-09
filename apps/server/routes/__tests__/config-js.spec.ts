@@ -3,8 +3,7 @@ import { createApp, toNodeListener } from 'h3'
 import { afterEach, describe, expect, it } from 'vitest'
 
 // Spin the dynamic /config.js handler on an ephemeral port and fetch it. The
-// handler reads CONTROL_TOKEN via serverEnv() at request time, so toggling the
-// env between cases works without re-importing.
+// handler reads runtime values via serverEnv() at request time.
 async function start() {
   const handler = (await import('../config.js')).default
   const app = createApp()
@@ -18,7 +17,7 @@ async function start() {
   return { server, base }
 }
 
-describe('apps/server routes/config.js -> control token injection (#2074)', () => {
+describe('apps/server routes/config.js runtime config', () => {
   const original = process.env.CONTROL_TOKEN
   const originalGithubToken = process.env.GITHUB_TOKEN
   const originalDefaultBackendURL = process.env.DEFAULT_BACKEND_URL
@@ -32,7 +31,7 @@ describe('apps/server routes/config.js -> control token injection (#2074)', () =
     else process.env.DEFAULT_BACKEND_URL = originalDefaultBackendURL
   })
 
-  it('injects CONTROL_TOKEN into window.__METACUBEXD_CONFIG__ as no-store JS', async () => {
+  it('never exposes CONTROL_TOKEN and serves no-store JS', async () => {
     process.env.CONTROL_TOKEN = 'super-secret'
     const { server, base } = await start()
     try {
@@ -42,7 +41,7 @@ describe('apps/server routes/config.js -> control token injection (#2074)', () =
       expect(res.headers.get('cache-control')).toContain('no-store')
       const body = await res.text()
       expect(body).toContain('window.__METACUBEXD_CONFIG__')
-      expect(body).toContain('"controlToken":"super-secret"')
+      expect(body).not.toContain('controlToken')
     } finally {
       await new Promise<void>((r) => server.close(() => r()))
     }

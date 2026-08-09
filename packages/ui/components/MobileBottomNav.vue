@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type {MobileNavReselectDetail} from '~/constants';
+import type { MobileNavReselectDetail } from '~/constants'
 import {
   IconChartAreaLine,
   IconFileStack,
@@ -8,15 +8,12 @@ import {
   IconNetwork,
   IconPlus,
   IconRuler,
+  IconServerBolt,
   IconServerCog,
   IconSettings,
   IconX,
 } from '@tabler/icons-vue'
-import {
-  MOBILE_NAV_RESELECT_EVENT,
-  
-  ROUTES
-} from '~/constants'
+import { MOBILE_NAV_RESELECT_EVENT, ROUTES } from '~/constants'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -44,6 +41,11 @@ const secondaryItems = computed(() => {
   // (e.g. a phone hitting the server-mode dashboard). Hidden in the plain web
   // dashboard, mirroring the desktop Sidebar gate.
   if (hasAgent.value) {
+    items.push({
+      href: '/gateway',
+      name: t('gateway.title'),
+      icon: IconServerBolt,
+    })
     items.push({
       href: '/control',
       name: t('controlCenter'),

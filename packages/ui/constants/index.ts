@@ -63,6 +63,7 @@ export enum ROUTES {
   Log = '/logs',
   Config = '/config',
   Setup = '/setup',
+  Gateway = '/gateway',
 }
 
 export const MOBILE_NAV_RESELECT_EVENT = 'mobile-nav:reselect'
