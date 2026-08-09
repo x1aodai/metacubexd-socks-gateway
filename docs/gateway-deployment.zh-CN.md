@@ -46,6 +46,48 @@ TCP 1080  来源：允许使用 SOCKS 的客户端 IP（或你的实际策略）
 `ss -lntp | grep -E ':(8080|9090)\\b'` 检查监听状态，并从非 WAF 机器
 确认两个端口无法连通。
 
+### 直接公网访问（无反向代理）
+
+如果明确接受 HTTP 明文传输风险，并希望通过 `域名:端口` 直接访问，使用：
+
+```bash
+cp public.env.example .env
+```
+
+然后编辑 `.env`，将两个 `gateway.example.com` 都替换成实际域名：
+
+```env
+CLASH_API_CORS_ORIGINS=http://panel.example.com:8080
+DEFAULT_BACKEND_URL=http://panel.example.com:9090
+```
+
+DNS 的 A/AAAA 记录应指向网关 VPS，并在云安全组开放 TCP 8080、9090。
+启动后访问：
+
+```text
+http://panel.example.com:8080
+```
+
+首次登录后，连接页会预填 `http://panel.example.com:9090`。执行下面的
+命令读取 Controller 密钥并填写到连接页的 Secret 字段；浏览器会把它保存在
+本地，以后不必重复输入：
+
+```bash
+cat deploy/secrets/clash_secret
+```
+
+如果当前目录已经是 `deploy`，使用 `cat secrets/clash_secret`。直接公网模式
+会把订阅中的 CORS 设置替换为 `.env` 中的精确来源，避免订阅自行开放
+Controller。需要同时使用域名和 IP 时，可用逗号配置多个来源：
+
+```env
+CLASH_API_CORS_ORIGINS=http://panel.example.com:8080,http://203.0.113.10:8080
+```
+
+此模式仅提供 HTTP，不提供原生 HTTPS。管理员密码、会话 Cookie、Controller
+密钥以及管理操作都会以未加密形式经过公网；任何能监听链路的人都可能窃取
+这些凭据。要使用 `https://域名:端口`，仍需 Nginx、Caddy 或其他 TLS 终止器。
+
 默认从 GHCR 拉取适用于 `linux/amd64` 和 `linux/arm64` 的公开镜像：
 `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`。升级时执行：
 
@@ -119,8 +161,9 @@ docker compose down
 
 - SOCKS5 用户名密码认证本身不加密。请使用生成的高熵密码，并尽可能在
   云安全组限制客户端来源 IP。
-- 8080、9090 只能向本机反向代理或宝塔 WAF 的固定 IP 开放，禁止向
-  `0.0.0.0/0` 开放；不要挂载 Docker Socket，也不要关闭 HTTPS。
+- 推荐让 8080、9090 只向本机反向代理或宝塔 WAF 的固定 IP 开放。直接
+  公网模式会主动放宽此限制并关闭 Secure Cookie，只应在明确接受 HTTP
+  明文凭据风险时使用。不要挂载 Docker Socket。
 - 订阅 URL 和节点分享链接属于凭据，禁止写入公开日志、截图或仓库。
 - 面板中的账号密码仅在创建或轮换时显示一次。
 - 对外分发自定义镜像时，应保留 MetaCubeXD MIT 许可，并履行内置

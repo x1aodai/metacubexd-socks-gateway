@@ -11,6 +11,8 @@
 > Prebuilt images: `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`.
 > A separate BaoTa WAF can use `deploy/waf.env.example` and the remote Nginx
 > example; restrict origin ports 8080/9090 to the WAF's fixed source IP.
+> Direct public HTTP access is available through `deploy/public.env.example`,
+> with the transport-security limitations documented in the deployment guide.
 
 A modern, beautiful, and fully-featured web dashboard for [Mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta).
 

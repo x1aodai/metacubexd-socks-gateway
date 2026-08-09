@@ -52,6 +52,7 @@ describe('managed SOCKS gateway', () => {
       minPort: address.port,
       maxPort: address.port,
       controllerUrl: '127.0.0.1:9090',
+      controllerCorsOrigins: ['http://gateway.example.com:8080'],
       fetch: vi.fn(async () => new Response('{}', { status: 200 })),
     })
     manager.bindSupervisor(fakeSupervisor())
@@ -67,6 +68,8 @@ mixed-port: 7890
 authentication: [unsafe:credential]
 skip-auth-prefixes: [127.0.0.1/32]
 tun: { enable: true }
+external-controller-cors:
+  allow-origins: ['*']
 listeners:
   - { name: unsafe-http, type: http, port: 8088, listen: 0.0.0.0 }
 proxies:
@@ -79,6 +82,10 @@ rules:
     expect(config.authentication).toBeUndefined()
     expect(config['skip-auth-prefixes']).toBeUndefined()
     expect(config.tun).toBeUndefined()
+    expect(config['external-controller-cors']).toEqual({
+      'allow-origins': ['http://gateway.example.com:8080'],
+      'allow-private-network': true,
+    })
     expect(config.listeners).toEqual([
       expect.objectContaining({
         name: 'gateway-socks',

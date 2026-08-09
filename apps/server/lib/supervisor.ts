@@ -7,6 +7,7 @@ export interface ServerEnv {
   controlPort: number
   clashApiPort: number
   clashApiBindAddress: string
+  clashApiCorsOrigins: string[]
   mixedPort: number
   dataDir: string
   mihomoBin: string
@@ -47,6 +48,10 @@ export function serverEnv(): ServerEnv {
     clashApiPort: int(process.env.CLASH_API_PORT, 9090),
     clashApiBindAddress:
       process.env.CLASH_API_BIND_ADDRESS?.trim() || '127.0.0.1',
+    clashApiCorsOrigins: (process.env.CLASH_API_CORS_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     mixedPort: int(process.env.MIXED_PORT, 7890),
     dataDir: process.env.DATA_DIR ?? '/data',
     mihomoBin: process.env.MIHOMO_BIN ?? '/usr/local/bin/mihomo',
@@ -93,6 +98,7 @@ export function getAgent(): Agent {
       defaultPort: env.socksPortMin,
       minPort: env.socksPortMin,
       maxPort: env.socksPortMax,
+      controllerCorsOrigins: env.clashApiCorsOrigins,
     },
   })
   return agentSingleton

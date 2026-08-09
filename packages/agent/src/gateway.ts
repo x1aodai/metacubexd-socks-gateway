@@ -74,6 +74,7 @@ export interface GatewayManagerOptions {
   maxPort?: number
   controllerUrl: string
   controllerSecret?: string
+  controllerCorsOrigins?: string[]
   fetch?: typeof fetch
   now?: () => number
 }
@@ -279,8 +280,19 @@ export function createGatewayManager(
       'allow-lan',
       'bind-address',
       'tun',
+      'external-controller-cors',
     ])
       delete document[key]
+
+    const controllerCorsOrigins = (options.controllerCorsOrigins ?? [])
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+    if (controllerCorsOrigins.length > 0) {
+      document['external-controller-cors'] = {
+        'allow-origins': [...new Set(controllerCorsOrigins)],
+        'allow-private-network': true,
+      }
+    }
 
     const managedNames = new Set(
       [state, previousState]
