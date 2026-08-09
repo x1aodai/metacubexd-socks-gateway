@@ -20,6 +20,7 @@ export interface ServerEnv {
   socksPortMin: number
   socksPortMax: number
   sessionCookieSecure: boolean
+  publicDirectAccess: boolean
 }
 
 function int(value: string | undefined, fallback: number): number {
@@ -64,6 +65,7 @@ export function serverEnv(): ServerEnv {
     socksPortMin: int(process.env.SOCKS_PORT_MIN, 1080),
     socksPortMax: int(process.env.SOCKS_PORT_MAX, 1099),
     sessionCookieSecure: process.env.SESSION_COOKIE_SECURE !== 'false',
+    publicDirectAccess: process.env.PUBLIC_DIRECT_ACCESS === 'true',
   }
 }
 

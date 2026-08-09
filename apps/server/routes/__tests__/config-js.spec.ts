@@ -21,6 +21,8 @@ describe('apps/server routes/config.js runtime config', () => {
   const original = process.env.CONTROL_TOKEN
   const originalGithubToken = process.env.GITHUB_TOKEN
   const originalDefaultBackendURL = process.env.DEFAULT_BACKEND_URL
+  const originalPublicDirectAccess = process.env.PUBLIC_DIRECT_ACCESS
+  const originalClashApiPort = process.env.CLASH_API_PORT
   afterEach(() => {
     if (original === undefined) delete process.env.CONTROL_TOKEN
     else process.env.CONTROL_TOKEN = original
@@ -29,6 +31,11 @@ describe('apps/server routes/config.js runtime config', () => {
     if (originalDefaultBackendURL === undefined)
       delete process.env.DEFAULT_BACKEND_URL
     else process.env.DEFAULT_BACKEND_URL = originalDefaultBackendURL
+    if (originalPublicDirectAccess === undefined)
+      delete process.env.PUBLIC_DIRECT_ACCESS
+    else process.env.PUBLIC_DIRECT_ACCESS = originalPublicDirectAccess
+    if (originalClashApiPort === undefined) delete process.env.CLASH_API_PORT
+    else process.env.CLASH_API_PORT = originalClashApiPort
   })
 
   it('never exposes CONTROL_TOKEN and serves no-store JS', async () => {
@@ -98,6 +105,20 @@ describe('apps/server routes/config.js runtime config', () => {
     try {
       const body = await (await fetch(`${base}/config.js`)).text()
       expect(body).toContain('"defaultBackendURL":""')
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+
+  it('advertises the direct controller port without exposing its secret', async () => {
+    process.env.PUBLIC_DIRECT_ACCESS = 'true'
+    process.env.CLASH_API_PORT = '19090'
+    process.env.CLASH_SECRET = 'must-stay-server-side'
+    const { server, base } = await start()
+    try {
+      const body = await (await fetch(`${base}/config.js`)).text()
+      expect(body).toContain('"directClashApiPort":19090')
+      expect(body).not.toContain('must-stay-server-side')
     } finally {
       await new Promise<void>((r) => server.close(() => r()))
     }

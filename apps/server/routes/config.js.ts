@@ -12,11 +12,13 @@ import { serverEnv } from '../lib/supervisor'
 // container's NUXT_PUBLIC_* mapping, the UI here is statically generated, so
 // this dynamic route is the only runtime channel that can carry the value.
 export default defineEventHandler((event) => {
-  const { githubToken, defaultBackendURL } = serverEnv()
+  const { githubToken, defaultBackendURL, publicDirectAccess, clashApiPort } =
+    serverEnv()
   const config: Record<string, unknown> = {
     defaultBackendURL,
     serverMode: true,
   }
+  if (publicDirectAccess) config.directClashApiPort = clashApiPort
   if (githubToken) config.githubToken = githubToken
   setHeader(event, 'content-type', 'text/javascript; charset=utf-8')
   // Never cache: runtime values must track the environment across restarts.

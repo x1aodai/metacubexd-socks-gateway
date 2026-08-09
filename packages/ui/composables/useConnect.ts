@@ -28,8 +28,21 @@ export function useConnect() {
     }
     if (typeof window !== 'undefined') {
       const deployConfig = (window as any).__METACUBEXD_CONFIG__ as
-        { defaultBackendURL?: string; serverMode?: boolean } | undefined
+        | {
+            defaultBackendURL?: string
+            serverMode?: boolean
+            directClashApiPort?: number
+          }
+        | undefined
       if (deployConfig?.defaultBackendURL) return deployConfig.defaultBackendURL
+      if (deployConfig?.directClashApiPort) {
+        const hostname = window.location.hostname
+        const host =
+          hostname.includes(':') && !hostname.startsWith('[')
+            ? `[${hostname}]`
+            : hostname
+        return `${window.location.protocol}//${host}:${deployConfig.directClashApiPort}`
+      }
       if (deployConfig?.serverMode) {
         return `${window.location.origin.replace(/\/$/, '')}/mihomo`
       }

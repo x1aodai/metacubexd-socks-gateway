@@ -54,39 +54,34 @@ TCP 1080  来源：允许使用 SOCKS 的客户端 IP（或你的实际策略）
 cp public.env.example .env
 ```
 
-然后编辑 `.env`，将两个 `gateway.example.com` 都替换成实际域名：
-
-```env
-CLASH_API_CORS_ORIGINS=http://panel.example.com:8080
-DEFAULT_BACKEND_URL=http://panel.example.com:9090
-```
-
 DNS 的 A/AAAA 记录应指向网关 VPS，并在云安全组开放 TCP 8080、9090。
-启动后访问：
+如果域名托管在 Cloudflare，必须把该记录设置为“仅 DNS（灰色云朵）”；
+Cloudflare 常规代理不转发 9090。启动后访问：
 
 ```text
 http://panel.example.com:8080
 ```
 
-首次登录后，连接页会预填 `http://panel.example.com:9090`。执行下面的
-命令读取 Controller 密钥并填写到连接页的 Secret 字段；浏览器会把它保存在
-本地，以后不必重复输入：
+面板会根据浏览器当前域名自动生成 `http://当前域名:9090`，无需在 `.env`
+重复填写域名。首次登录后，执行下面的命令读取 Controller 密钥并填写到
+连接页的 Secret 字段；浏览器会把它保存在本地，以后不必重复输入：
 
 ```bash
 cat deploy/secrets/clash_secret
 ```
 
 如果当前目录已经是 `deploy`，使用 `cat secrets/clash_secret`。直接公网模式
-会把订阅中的 CORS 设置替换为 `.env` 中的精确来源，避免订阅自行开放
-Controller。需要同时使用域名和 IP 时，可用逗号配置多个来源：
-
-```env
-CLASH_API_CORS_ORIGINS=http://panel.example.com:8080,http://203.0.113.10:8080
-```
+会把订阅中的 CORS 设置替换为公网模式值，避免订阅自行修改 Controller。
 
 此模式仅提供 HTTP，不提供原生 HTTPS。管理员密码、会话 Cookie、Controller
 密钥以及管理操作都会以未加密形式经过公网；任何能监听链路的人都可能窃取
 这些凭据。要使用 `https://域名:端口`，仍需 Nginx、Caddy 或其他 TLS 终止器。
+
+如果日志出现 `Unsupported state or unable to authenticate data`，说明当前
+`gateway_master_key` 与 Docker volume 里的加密状态不匹配。优先恢复原密钥；
+原密钥丢失时应先停止容器，把 `/data/gateway.enc`、`subscriptions.enc`、
+`admin.enc` 和 `/data/revisions` 移入备份目录，再重新启动。不要删除整个
+数据卷，否则 Profile 和其他运行数据也会丢失。
 
 默认从 GHCR 拉取适用于 `linux/amd64` 和 `linux/arm64` 的公开镜像：
 `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`。升级时执行：
