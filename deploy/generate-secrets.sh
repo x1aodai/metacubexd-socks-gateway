@@ -25,4 +25,4 @@ write_secret control_token "$(openssl rand -hex 32)"
 write_secret clash_secret "$(openssl rand -hex 32)"
 
 printf '\nInitial administrator password (shown once):\n%s\n\n' "$admin_password"
-echo 'Store it in a password manager, then run: docker compose up -d --build'
+echo 'Store it in a password manager, then run: docker compose pull && docker compose up -d'
