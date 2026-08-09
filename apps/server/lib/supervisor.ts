@@ -6,6 +6,7 @@ import { createAgent } from '@metacubexd/agent'
 export interface ServerEnv {
   controlPort: number
   clashApiPort: number
+  clashApiBindAddress: string
   mixedPort: number
   dataDir: string
   mihomoBin: string
@@ -44,6 +45,8 @@ export function serverEnv(): ServerEnv {
   return {
     controlPort: int(process.env.CONTROL_PORT, 8080),
     clashApiPort: int(process.env.CLASH_API_PORT, 9090),
+    clashApiBindAddress:
+      process.env.CLASH_API_BIND_ADDRESS?.trim() || '127.0.0.1',
     mixedPort: int(process.env.MIXED_PORT, 7890),
     dataDir: process.env.DATA_DIR ?? '/data',
     mihomoBin: process.env.MIHOMO_BIN ?? '/usr/local/bin/mihomo',
@@ -78,8 +81,9 @@ export function getAgent(): Agent {
     homeDir: env.dataDir,
     profilesDir: dataPath(env.dataDir, 'profiles'),
     activeConfigPath: dataPath(env.dataDir, 'active.yaml'),
-    // The Clash API is an internal control plane and must never bind publicly.
-    externalController: `127.0.0.1:${env.clashApiPort}`,
+    // Loopback remains the safe default. A separately hosted reverse proxy may
+    // bind this to 0.0.0.0 and restrict the origin port to that proxy's IP.
+    externalController: `${env.clashApiBindAddress}:${env.clashApiPort}`,
     secret: env.clashSecret,
     // No mixed-port is configured: the managed gateway overlay owns the only
     // public listener and enforces authenticated SOCKS on the selected port.

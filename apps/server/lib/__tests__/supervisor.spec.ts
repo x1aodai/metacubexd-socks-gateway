@@ -27,6 +27,7 @@ describe('apps/server lib/supervisor', () => {
   it('reads server env into a typed config with documented defaults', async () => {
     delete process.env.CONTROL_PORT
     delete process.env.CLASH_API_PORT
+    delete process.env.CLASH_API_BIND_ADDRESS
     delete process.env.MIXED_PORT
     delete process.env.DATA_DIR
     delete process.env.MIHOMO_BIN
@@ -41,6 +42,7 @@ describe('apps/server lib/supervisor', () => {
     const env = serverEnv()
     expect(env.controlPort).toBe(8080)
     expect(env.clashApiPort).toBe(9090)
+    expect(env.clashApiBindAddress).toBe('127.0.0.1')
     expect(env.mixedPort).toBe(7890)
     expect(env.dataDir).toBe('/data')
     expect(env.mihomoBin).toBe('/usr/local/bin/mihomo')
@@ -52,6 +54,7 @@ describe('apps/server lib/supervisor', () => {
   it('honours overridden ports/paths from env', async () => {
     process.env.CONTROL_PORT = '18080'
     process.env.CLASH_API_PORT = '19090'
+    process.env.CLASH_API_BIND_ADDRESS = '0.0.0.0'
     process.env.MIXED_PORT = '17890'
     process.env.DATA_DIR = '/srv/data'
     process.env.MIHOMO_BIN = '/opt/mihomo'
@@ -60,6 +63,7 @@ describe('apps/server lib/supervisor', () => {
     const env = serverEnv()
     expect(env.controlPort).toBe(18080)
     expect(env.clashApiPort).toBe(19090)
+    expect(env.clashApiBindAddress).toBe('0.0.0.0')
     expect(env.mixedPort).toBe(17890)
     expect(env.dataDir).toBe('/srv/data')
     expect(env.mihomoBin).toBe('/opt/mihomo')
@@ -70,6 +74,7 @@ describe('apps/server lib/supervisor', () => {
     process.env.DATA_DIR = '/data'
     process.env.MIHOMO_BIN = '/usr/local/bin/mihomo'
     process.env.CLASH_API_PORT = '9090'
+    process.env.CLASH_API_BIND_ADDRESS = '0.0.0.0'
     process.env.CLASH_SECRET = 'clash-x'
     process.env.GATEWAY_MASTER_KEY = 'gateway-key'
     const { getAgent } = await import('../supervisor')
@@ -83,7 +88,7 @@ describe('apps/server lib/supervisor', () => {
     expect(opts.profilesDir).toBe('/data/profiles')
     expect(opts.activeConfigPath).toBe('/data/active.yaml')
     expect(opts.agentToken).toBeUndefined()
-    expect(opts.externalController).toBe('127.0.0.1:9090')
+    expect(opts.externalController).toBe('0.0.0.0:9090')
     expect(opts.secret).toBe('clash-x')
     expect(opts.mixedPort).toBeUndefined()
     expect(opts.gateway).toEqual(

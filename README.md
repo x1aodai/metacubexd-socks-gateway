@@ -9,6 +9,8 @@
 > fail-closed outbound groups, revisions and administrator authentication.
 > Start with the [Chinese deployment guide](docs/gateway-deployment.zh-CN.md).
 > Prebuilt images: `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`.
+> A separate BaoTa WAF can use `deploy/waf.env.example` and the remote Nginx
+> example; restrict origin ports 8080/9090 to the WAF's fixed source IP.
 
 A modern, beautiful, and fully-featured web dashboard for [Mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta).
 

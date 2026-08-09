@@ -19,7 +19,7 @@ export default defineNitroConfig({
   // cannot upgrade WebSocket connections (nitrojs/nitro#2886), and the
   // dashboard talks to mihomo's Clash API over native WebSocket (traffic,
   // connections, logs). Proxying would yield a half-broken endpoint (HTTP ok,
-  // WS dead). Instead the agent injects `external-controller: 0.0.0.0:<port>`
-  // into the active config and the published 9090 port is hit directly by the
-  // UI endpoint store. Do NOT add a /clash-api proxy route.
+  // WS dead). Instead the agent injects the configured external-controller
+  // bind address into the active config and the reverse proxy reaches port 9090
+  // directly. Do NOT add a /clash-api proxy route.
 })

@@ -8,12 +8,13 @@ Debian/Ubuntu x86_64 与 Docker Compose v2。
 
 ```text
 公网 SOCKS 客户端 -> VPS:<1080-1099> -> Mihomo GATEWAY -> 上游节点
-管理浏览器 -> 你的 HTTPS 反向代理 -> 127.0.0.1:8080
-                                    -> /mihomo/* -> 127.0.0.1:9090
+管理浏览器 -> HTTPS/WAF -> VPS:8080（面板与管理 API）
+                         -> VPS:9090（/mihomo HTTP + WebSocket）
 ```
 
-容器使用 host 网络，才能在面板修改 SOCKS 监听端口。8080 和 9090
-仅绑定回环地址，不应在云安全组或主机防火墙中公开。
+容器使用 host 网络，才能在面板修改 SOCKS 监听端口。本机反向代理模式下，
+8080 和 9090 默认只绑定回环地址。宝塔 WAF 位于另一台机器时，可让两个
+端口绑定 `0.0.0.0`，但云安全组和主机防火墙必须只允许 WAF 的固定源 IP。
 
 ## 首次启动
 
@@ -26,6 +27,24 @@ docker compose pull
 docker compose up -d
 docker compose ps
 ```
+
+如果宝塔 WAF 与网关不在同一台机器，把复制环境文件的命令改为：
+
+```bash
+cp waf.env.example .env
+```
+
+这会让 8080、9090 监听所有 IPv4 接口。在启动容器前，先将云安全组设置为：
+
+```text
+TCP 8080  来源：宝塔 WAF 固定公网 IP/32
+TCP 9090  来源：宝塔 WAF 固定公网 IP/32
+TCP 1080  来源：允许使用 SOCKS 的客户端 IP（或你的实际策略）
+```
+
+不要把 8080、9090 的来源设置为 `0.0.0.0/0`。可在 VPS 上用
+`ss -lntp | grep -E ':(8080|9090)\\b'` 检查监听状态，并从非 WAF 机器
+确认两个端口无法连通。
 
 默认从 GHCR 拉取适用于 `linux/amd64` 和 `linux/arm64` 的公开镜像：
 `ghcr.io/x1aodai/metacubexd-socks-gateway:latest`。升级时执行：
@@ -53,17 +72,19 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 ## 反向代理
 
-复制 `deploy/nginx.conf.example` 或 `deploy/Caddyfile.example` 并替换域名。
-反向代理必须：
+反向代理与网关同机时，使用 `deploy/nginx.conf.example` 或
+`deploy/Caddyfile.example`。宝塔 WAF 在另一台机器时，使用
+`deploy/nginx.remote-waf.conf.example`，并替换域名、网关公网 IP 和
+`REPLACE_WITH_CLASH_SECRET`。反向代理必须：
 
 - 为面板提供 HTTPS；
-- 将普通请求转发到 `127.0.0.1:8080`；
-- 将 `/mihomo/*` 去除前缀后转发到 `127.0.0.1:9090`；
+- 将普通请求转发到网关 VPS 的 `8080`；
+- 将 `/mihomo/*` 去除前缀后转发到网关 VPS 的 `9090`；
 - 保留 WebSocket Upgrade；
 - 先用 `/api/auth/check` 验证面板会话；
 - 给 Mihomo 请求注入 `Authorization: Bearer <CLASH_SECRET>`。
 
-Nginx 示例中的 `REPLACE_WITH_CLASH_SECRET` 应替换为
+Nginx/宝塔示例中的 `REPLACE_WITH_CLASH_SECRET` 应替换为网关 VPS 上
 `deploy/secrets/clash_secret` 的内容。Caddy 示例从进程环境变量
 `CLASH_SECRET` 读取同一值。不要把这个密钥提交到 Git。
 
@@ -98,7 +119,8 @@ docker compose down
 
 - SOCKS5 用户名密码认证本身不加密。请使用生成的高熵密码，并尽可能在
   云安全组限制客户端来源 IP。
-- 不要公开 8080、9090，不要挂载 Docker Socket，也不要关闭 HTTPS。
+- 8080、9090 只能向本机反向代理或宝塔 WAF 的固定 IP 开放，禁止向
+  `0.0.0.0/0` 开放；不要挂载 Docker Socket，也不要关闭 HTTPS。
 - 订阅 URL 和节点分享链接属于凭据，禁止写入公开日志、截图或仓库。
 - 面板中的账号密码仅在创建或轮换时显示一次。
 - 对外分发自定义镜像时，应保留 MetaCubeXD MIT 许可，并履行内置
