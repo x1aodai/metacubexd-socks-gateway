@@ -92,35 +92,17 @@ describe('local gateway port editor', () => {
     ).toContain('相邻两跳不能使用同一个节点')
   })
 
-  it('preserves failover order and reorders only the local draft', () => {
-    const original = port({
-      hops: [
-        {
-          mode: 'failover',
-          nodeIds: ['node-1', 'node-2', 'node-3'],
-        },
-      ],
-    })
-    const editor = usePortEditor(original)
-
-    expect(editor.moveFailoverNode(0, 2, 0)).toBe(true)
-    expect(editor.draft.value.hops[0]?.nodeIds).toEqual([
-      'node-3',
-      'node-1',
-      'node-2',
-    ])
-    expect(original.hops[0]?.nodeIds).toEqual(['node-1', 'node-2', 'node-3'])
-  })
-
   it('adds and removes at most two hops and previews without sharing references', () => {
     const original = port()
     const editor = usePortEditor(original)
 
-    expect(editor.addHop('manual')).toBe(true)
+    editor.addHop()
     editor.draft.value.hops[0]!.nodeIds = ['node-1']
-    expect(editor.addHop('auto')).toBe(true)
+    editor.addHop()
+    editor.draft.value.hops[1]!.mode = 'auto'
     editor.draft.value.hops[1]!.nodeIds = ['node-2']
-    expect(editor.addHop('failover')).toBe(false)
+    editor.addHop()
+    expect(editor.draft.value.hops).toHaveLength(2)
 
     const preview = previewGatewayChain(editor.draft.value)
     preview[0]!.nodeIds.push('preview-only')

@@ -1,4 +1,4 @@
-import type { GatewayHop, GatewayMode, GatewayPort } from '~/types/gateway'
+import type { GatewayHop, GatewayPort } from '~/types/gateway'
 import { computed, ref } from 'vue'
 
 export type PortDraft = Pick<GatewayPort, 'enabled' | 'credentialIds' | 'hops'>
@@ -50,57 +50,26 @@ export function validatePortDraft(source: PortDraft): string[] {
 export function usePortEditor(source: PortDraft) {
   const draft = ref(clonePortDraft(source))
   const errors = computed(() => validatePortDraft(draft.value))
-  const valid = computed(() => errors.value.length === 0)
-  const preview = computed(() => previewGatewayChain(draft.value))
 
   function reset(next: PortDraft = source) {
     draft.value = clonePortDraft(next)
   }
 
-  function addHop(mode: GatewayMode): boolean {
-    if (draft.value.hops.length >= 2) return false
-    draft.value.hops.push({ mode, nodeIds: [] })
-    return true
+  function addHop() {
+    if (draft.value.hops.length >= 2) return
+    draft.value.hops.push({ mode: 'manual', nodeIds: [] })
   }
 
-  function removeHop(index: number): boolean {
-    if (!draft.value.hops[index]) return false
+  function removeHop(index: number) {
+    if (!draft.value.hops[index]) return
     draft.value.hops.splice(index, 1)
-    return true
-  }
-
-  function moveFailoverNode(
-    hopIndex: number,
-    fromIndex: number,
-    toIndex: number,
-  ): boolean {
-    const hop = draft.value.hops[hopIndex]
-    if (
-      hop?.mode !== 'failover' ||
-      !Number.isInteger(fromIndex) ||
-      !Number.isInteger(toIndex) ||
-      fromIndex < 0 ||
-      fromIndex >= hop.nodeIds.length ||
-      toIndex < 0 ||
-      toIndex >= hop.nodeIds.length
-    )
-      return false
-
-    const nodeIds = [...hop.nodeIds]
-    const [nodeId] = nodeIds.splice(fromIndex, 1)
-    nodeIds.splice(toIndex, 0, nodeId!)
-    hop.nodeIds = nodeIds
-    return true
   }
 
   return {
     draft,
     errors,
-    valid,
-    preview,
     reset,
     addHop,
     removeHop,
-    moveFailoverNode,
   }
 }
