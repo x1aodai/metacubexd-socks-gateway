@@ -1,7 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readonly } from 'vue'
-
-vi.stubGlobal('readonly', readonly)
 
 interface AuthApiStub {
   getSession: ReturnType<typeof vi.fn>
@@ -38,13 +35,13 @@ describe('gateway authentication state', () => {
       const auth = await loadAuth(api)
 
       await expect(auth.login('wrong')).resolves.toBe('unauthenticated')
-      expect(auth.state.value).toBe('unauthenticated')
-      expect(auth.authenticated.value).toBe(false)
-      expect(auth.user.value).toBe('')
+      expect(auth).not.toHaveProperty('state')
+      expect(auth).not.toHaveProperty('authenticated')
+      expect(auth).not.toHaveProperty('user')
     }
   })
 
-  it('deduplicates a session check and exposes the authenticated user', async () => {
+  it('deduplicates a session check', async () => {
     let resolveSession!: (value: {
       authenticated: true
       user: string
@@ -70,7 +67,6 @@ describe('gateway authentication state', () => {
       'authenticated',
       'authenticated',
     ])
-    expect(auth.user.value).toBe('admin')
   })
 
   it('fails closed on session and login errors', async () => {
@@ -82,13 +78,11 @@ describe('gateway authentication state', () => {
       api.getSession.mockRejectedValueOnce(error)
       const auth = await loadAuth(api)
       await expect(auth.check()).resolves.toBe('unauthenticated')
-      expect(auth.state.value).toBe('unauthenticated')
     }
 
     api.login.mockRejectedValueOnce(new TypeError('network failed'))
     const auth = await loadAuth(api)
     await expect(auth.login('password')).rejects.toThrow('network failed')
-    expect(auth.state.value).toBe('unauthenticated')
   })
 
   it('clears local identity even when logout fails', async () => {
@@ -102,8 +96,6 @@ describe('gateway authentication state', () => {
 
     await auth.login('password')
     await expect(auth.logout()).rejects.toThrow('network failed')
-
-    expect(auth.state.value).toBe('unauthenticated')
-    expect(auth.user.value).toBe('')
+    await expect(auth.check()).resolves.toBe('unauthenticated')
   })
 })

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { IconLock } from '@tabler/icons-vue'
+import { ref } from 'vue'
 
 definePageMeta({ layout: 'blank' })
 

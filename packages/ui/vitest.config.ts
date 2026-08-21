@@ -14,20 +14,8 @@ export default defineConfig({
     // Increase timeout for e2e tests
     testTimeout: 60000,
     hookTimeout: 60000,
-    // Run tests sequentially since they share a server
-    pool: 'forks',
-    // Use maxWorkers: 1 to run tests sequentially (replaces poolOptions.forks.singleFork)
-    maxWorkers: 1,
-    // Setup file for unit tests
-    setupFiles: ['./test/setup.ts'],
     // Use jsdom environment for DOM API support
     environment: 'jsdom',
-    // Coverage configuration
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'html', 'lcov'],
-      include: ['stores/**/*.ts', 'composables/**/*.ts', 'utils/**/*.ts'],
-      exclude: ['**/__tests__/**', '**/index.ts', '**/*.d.ts'],
-    },
+    unstubGlobals: true,
   },
 })

@@ -2,48 +2,46 @@ import { describe, expect, it } from 'vitest'
 import { controlErrorMessage } from '../controlError'
 
 describe('controlErrorMessage', () => {
-  it('prefers the nested H3 validator diagnostic from a ky HTTPError (#2121)', () => {
+  it('prefers the nested H3 gateway diagnostic from a ky HTTPError', () => {
     const error = Object.assign(
       new Error('Request failed with status code 400'),
       {
         data: {
           statusCode: 400,
-          statusMessage: 'profile validation failed',
-          data: { error: 'rules[3] GEOIP: database download failed' },
+          statusMessage: 'gateway validation failed',
+          data: { error: 'gateway port requires an enabled credential' },
         },
       },
     )
 
     expect(controlErrorMessage(error)).toBe(
-      'rules[3] GEOIP: database download failed',
+      'gateway port requires an enabled credential',
     )
   })
 
   it('falls back through the H3 status message and an ordinary Error', () => {
     expect(
       controlErrorMessage({
-        data: { statusMessage: 'profile validation failed' },
+        data: { statusMessage: 'gateway validation failed' },
       }),
-    ).toBe('profile validation failed')
+    ).toBe('gateway validation failed')
     expect(controlErrorMessage(new Error('network down'))).toBe('network down')
   })
 
-  it('surfaces the structured subscription provider status (#2138)', () => {
+  it('surfaces a structured subscription error', () => {
     const error = Object.assign(
       new Error('Request failed with status code 429'),
       {
         data: {
           statusCode: 429,
           data: {
-            error: 'Subscription provider returned HTTP 429',
+            error: 'subscription refresh failed',
             upstreamStatus: 429,
           },
         },
       },
     )
 
-    expect(controlErrorMessage(error)).toBe(
-      'Subscription provider returned HTTP 429',
-    )
+    expect(controlErrorMessage(error)).toBe('subscription refresh failed')
   })
 })

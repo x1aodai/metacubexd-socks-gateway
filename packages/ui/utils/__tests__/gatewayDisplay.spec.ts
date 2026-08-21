@@ -20,6 +20,9 @@ describe('gateway display text', () => {
     expect(gatewayErrorMessage(new Error('内部数据库路径已损坏'))).toBe(
       '操作失败，请稍后重试。',
     )
+    expect(gatewayErrorMessage(new Error('Gateway unavailable'))).toBe(
+      '操作失败，请稍后重试。',
+    )
   })
 
   it('turns internal apply reasons into concise Chinese labels', () => {

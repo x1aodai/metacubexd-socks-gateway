@@ -36,13 +36,13 @@ jobs:
           node-version: latest
 
       - name: install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: install playwright browsers
         run: pnpm --filter @metacubexd/ui exec playwright install --with-deps chromium
 
-      - name: build with mock mode
-        run: pnpm --filter @metacubexd/ui build:mock
+      - name: build
+        run: pnpm --filter @metacubexd/ui build
 
       - name: run e2e tests
         run: pnpm --filter @metacubexd/ui test:e2e

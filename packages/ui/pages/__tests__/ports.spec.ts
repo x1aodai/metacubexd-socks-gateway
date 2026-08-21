@@ -105,9 +105,6 @@ describe('ports page', () => {
       }),
     )
     vi.stubGlobal('useGatewayApi', () => api)
-    vi.stubGlobal('controlErrorMessage', (error: unknown) =>
-      error instanceof Error ? error.message : '操作失败',
-    )
   })
 
   afterEach(() => {

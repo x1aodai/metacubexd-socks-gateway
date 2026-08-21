@@ -9,6 +9,7 @@ import type {
   GatewaySubscription,
 } from '../types/gateway'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright'
 import {
@@ -517,9 +518,11 @@ describe('gateway core flows', () => {
   let fixture: MockGateway
 
   beforeAll(async () => {
+    if (!existsSync(SERVER_ENTRY))
+      throw new Error('Nuxt build is unavailable; run pnpm build first')
     server = spawn(process.execPath, [SERVER_ENTRY], {
       stdio: 'inherit',
-      env: { ...process.env, PORT, MOCK_MODE: 'true' },
+      env: { ...process.env, PORT },
     })
     await waitForServer()
     browser = await launchBrowser()

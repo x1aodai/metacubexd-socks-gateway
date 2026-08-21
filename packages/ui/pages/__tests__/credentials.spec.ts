@@ -45,7 +45,6 @@ beforeEach(() => {
     rotateCredential: vi.fn(),
   }
   vi.stubGlobal('useGatewayApi', () => api)
-  vi.stubGlobal('controlErrorMessage', () => '请求未完成，请稍后重试。')
   vi.stubGlobal('useHead', vi.fn())
 })
 

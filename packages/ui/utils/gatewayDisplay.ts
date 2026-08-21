@@ -34,7 +34,6 @@ const gatewayMessages: Readonly<Record<string, string>> = {
   配置校验失败: '配置校验失败',
   'gateway validation failed': '配置校验失败，请检查账号、节点和链路。',
   'gateway operation failed': '网关操作失败，请稍后重试。',
-  'Gateway unavailable': '网关服务暂时不可用。',
   'Gateway status unavailable': '暂时无法读取网关状态。',
   'subscription operation failed': '订阅操作失败，请稍后重试。',
   'subscription not found': '订阅不存在。',

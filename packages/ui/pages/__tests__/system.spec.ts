@@ -64,9 +64,6 @@ describe('system page', () => {
     vi.stubGlobal('useGatewayApi', () => api)
     vi.stubGlobal('useGatewayAuth', () => auth)
     vi.stubGlobal('navigateTo', navigateTo)
-    vi.stubGlobal('controlErrorMessage', (error: unknown) =>
-      error instanceof Error ? error.message : '操作失败',
-    )
   })
 
   it('shows only core service, version, listener, and recent apply information', async () => {

@@ -158,11 +158,6 @@ describe('gateway shell navigation', () => {
         stubs: {
           NuxtLayout: { template: '<div><slot /></div>' },
           NuxtPage: { template: '<div data-testid="nuxt-page" />' },
-          PwaUpdatePrompt: true,
-          Toaster: {
-            props: ['theme'],
-            template: '<div data-testid="toaster" :data-theme="theme" />',
-          },
         },
       },
     })
@@ -172,7 +167,6 @@ describe('gateway shell navigation', () => {
     expect(
       app.get('[data-testid="nuxt-page"]').attributes('transition'),
     ).toBeUndefined()
-    expect(app.find('[data-testid="toaster"]').exists()).toBe(false)
   })
 
   it('keeps focus and immediate native dialog close without animations', async () => {

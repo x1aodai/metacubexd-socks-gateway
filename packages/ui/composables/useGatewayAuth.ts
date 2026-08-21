@@ -1,15 +1,14 @@
 import type { GatewayAuthSession } from '~/types/gateway'
+import { ref } from 'vue'
 
 export type GatewayAuthState =
   'unknown' | 'checking' | 'authenticated' | 'unauthenticated'
 
 const state = ref<GatewayAuthState>('unknown')
-const user = ref('')
 let sessionRequest: Promise<GatewayAuthState> | null = null
 
 function unauthenticated(): GatewayAuthState {
   state.value = 'unauthenticated'
-  user.value = ''
   return state.value
 }
 
@@ -23,7 +22,6 @@ function applySession(session: GatewayAuthSession): GatewayAuthState {
   )
     return unauthenticated()
   state.value = 'authenticated'
-  user.value = session.user
   return state.value
 }
 
@@ -64,9 +62,6 @@ export function useGatewayAuth() {
   }
 
   return {
-    state: readonly(state),
-    user: readonly(user),
-    authenticated: computed(() => state.value === 'authenticated'),
     check,
     login,
     logout,
