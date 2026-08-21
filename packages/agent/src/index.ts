@@ -28,6 +28,9 @@ export type {
   GatewayManager,
   GatewayManagerOptions,
   GatewayNode,
+  GatewayNodeImpact,
+  GatewayNodeTestErrorCode,
+  GatewayNodeTestResult,
   GatewayRevision,
   GatewayStatus,
 } from './gateway'
@@ -54,6 +57,8 @@ export type {
   GatewaySubscription,
   GatewaySubscriptionManager,
   GatewaySubscriptionManagerOptions,
+  GatewaySubscriptionRefreshItem,
+  GatewaySubscriptionRefreshResult,
 } from './gateway-subscriptions'
 export { createControlRouter } from './http'
 export type { ControlRouterDeps } from './http'

@@ -376,17 +376,13 @@ rules:
     expect(portObjects(after, 10002)).toEqual(portObjects(before, 10002))
   })
 
-  it('only emits enabled node candidates and falls back to REJECT', () => {
-    const { state, nodes } = tenPortState()
+  it('rejects an enabled port whose candidates are all disabled', () => {
+    const { state } = tenPortState()
     for (const source of Object.values(state.nodeSources)) {
       for (const node of source.nodes) node.enabled = false
     }
-    const config = rendered('{}', state)
-    const groups = config['proxy-groups'] as Array<Record<string, unknown>>
 
-    expect(config.proxies).toEqual([])
-    expect(groups[0]?.proxies).toEqual(['REJECT'])
-    expect(JSON.stringify(config)).not.toContain(`GW-NODE-${nodes[0]!.id}`)
+    expect(() => rendered('{}', state)).toThrow(/enabled node candidate/i)
   })
 
   it('rejects imported route-control fields instead of honoring them', () => {

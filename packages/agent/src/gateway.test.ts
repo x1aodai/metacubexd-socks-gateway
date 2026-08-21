@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { parse } from 'yaml'
 import { createGatewayManager } from './gateway'
+import { stableNodeId } from './subscription'
 
 function fakeSupervisor(
   validate = vi.fn(async () => ({ valid: true, message: '' })),
@@ -46,13 +47,14 @@ describe('managed SOCKS gateway', () => {
       portIds: [1],
     })
     expect(created.password).toBe('a-secure-socks-password')
+    const proxy = {
+      name: 'node-a',
+      type: 'socks5' as const,
+      server: '203.0.113.1',
+      port: 1080,
+    }
     await manager.appendImportedNodes([
-      {
-        name: 'node-a',
-        type: 'socks5',
-        server: '203.0.113.1',
-        port: 1080,
-      },
+      { id: stableNodeId(proxy), originalName: proxy.name, proxy },
     ])
     await manager.setOutbound({ mode: 'manual', nodeId: 'node-a' })
     await manager.updateGateway({ enabled: true })

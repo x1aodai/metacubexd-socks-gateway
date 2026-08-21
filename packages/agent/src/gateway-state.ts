@@ -106,11 +106,26 @@ export function validateGatewayStateV2(state: GatewayStateV2): void {
     state.credentials.map((credential) => [credential.id, credential]),
   )
   const nodeIds = new Set<string>()
-  for (const source of Object.values(state.nodeSources)) {
+  const enabledNodeIds = new Set<string>()
+  for (const [sourceId, source] of Object.entries(state.nodeSources)) {
+    if (!Array.isArray(source.nodes) || !Array.isArray(source.excludedNodeIds))
+      throw new Error(`node source ${sourceId} is invalid`)
+    const excludedNodeIds = new Set(source.excludedNodeIds)
+    if (excludedNodeIds.size !== source.excludedNodeIds.length)
+      throw new Error(`node source ${sourceId} has duplicate exclusions`)
+    const sourceNodeIds = new Set<string>()
     for (const node of source.nodes) {
       if (node.id !== stableNodeId(node.proxy))
         throw new Error(`node ${node.id} does not match its stable node ID`)
+      if (sourceNodeIds.has(node.id))
+        throw new Error(`node source ${sourceId} has duplicate node ${node.id}`)
+      if (excludedNodeIds.has(node.id))
+        throw new Error(
+          `node source ${sourceId} includes excluded node ${node.id}`,
+        )
+      sourceNodeIds.add(node.id)
       nodeIds.add(node.id)
+      if (node.enabled) enabledNodeIds.add(node.id)
     }
   }
 
@@ -148,7 +163,16 @@ export function validateGatewayStateV2(state: GatewayStateV2): void {
         `enabled gateway port ${port.id} requires an enabled credential`,
       )
 
-    for (const hop of port.hops) validateHop(port.id, hop, nodeIds)
+    for (const hop of port.hops) {
+      validateHop(port.id, hop, nodeIds)
+      if (
+        port.enabled &&
+        !hop.nodeIds.some((nodeId) => enabledNodeIds.has(nodeId))
+      )
+        throw new Error(
+          `enabled gateway port ${port.id} hop requires an enabled node candidate`,
+        )
+    }
     if (port.hops.length === 2) {
       const firstHopIds = new Set(port.hops[0]!.nodeIds)
       if (port.hops[1]!.nodeIds.some((id) => firstHopIds.has(id)))
@@ -165,7 +189,9 @@ export function migrateV1ToV2(state: GatewayStateV1): GatewayStateV2 {
   const seenNodeIds = new Set<string>()
   const nodeSources = Object.fromEntries(
     Object.entries(state.nodeSources).map(([sourceId, proxies]) => {
-      const nodes = proxies.map((proxy) => {
+      const nodes: StoredNode[] = []
+      const sourceNodeIds = new Set<string>()
+      for (const proxy of proxies) {
         assertMigratableProxy(proxy, sourceId)
         const stored = {
           id: stableNodeId(proxy),
@@ -179,8 +205,11 @@ export function migrateV1ToV2(state: GatewayStateV1): GatewayStateV2 {
           seenNodeIds.add(stored.id)
           allNodeIds.push(stored.id)
         }
-        return stored
-      })
+        if (!sourceNodeIds.has(stored.id)) {
+          sourceNodeIds.add(stored.id)
+          nodes.push(stored)
+        }
+      }
       return [
         sourceId,
         { nodes, excludedNodeIds: [] } satisfies StoredNodeSource,

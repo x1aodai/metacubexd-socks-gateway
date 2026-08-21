@@ -205,6 +205,18 @@ describe('gateway v2 state', () => {
     ]
     expect(() => validateGatewayStateV2(repeated)).toThrow(/consecutive hops/i)
   })
+
+  it('requires every hop of an enabled port to retain a globally enabled node', () => {
+    const state = validState()
+    const referencedId = state.ports[0]!.hops[0]!.nodeIds[0]!
+    for (const source of Object.values(state.nodeSources))
+      for (const node of source.nodes)
+        if (node.id === referencedId) node.enabled = false
+
+    expect(() => validateGatewayStateV2(state)).toThrow(
+      /enabled node candidate/i,
+    )
+  })
 })
 
 describe('gateway v1 to v2 migration', () => {
@@ -289,5 +301,29 @@ describe('gateway v1 to v2 migration', () => {
     source.credentials = [credential('disabled', false)]
 
     expect(() => migrateV1ToV2(source)).toThrow(/enabled credential/i)
+  })
+
+  it('deduplicates same-source aliases by stable ID while mapping every name', () => {
+    const first = proxy('first-name', 3080)
+    const alias = { ...first, name: 'second-name' }
+    const source = v1State({
+      enabled: true,
+      mode: 'manual',
+      selectedNode: alias.name,
+    })
+    source.nodeSources = { manual: [first, alias] }
+
+    const migrated = migrateV1ToV2(source)
+
+    expect(migrated.nodeSources.manual?.nodes).toEqual([
+      expect.objectContaining({
+        id: stableNodeId(first),
+        proxy: first,
+      }),
+    ])
+    expect(migrated.ports[0]!.hops).toEqual([
+      { mode: 'manual', nodeIds: [stableNodeId(first)] },
+    ])
+    expect(() => validateGatewayStateV2(migrated)).not.toThrow()
   })
 })

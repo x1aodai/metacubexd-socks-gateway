@@ -19,6 +19,7 @@ const PROXY = {
   port: 1080,
 }
 const NODE_ID = stableNodeId(PROXY)
+const NODE = { id: NODE_ID, originalName: PROXY.name, proxy: PROXY }
 const HOPS: GatewayHop[] = [{ mode: 'manual', nodeIds: [NODE_ID] }]
 
 function stoppedState(): KernelState {
@@ -75,7 +76,7 @@ async function setup() {
   })
   manager.bindSupervisor(fake.supervisor)
   await manager.bootstrap()
-  await manager.appendImportedNodes([PROXY])
+  await manager.appendImportedNodes([NODE])
   return { manager, fake }
 }
 

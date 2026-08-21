@@ -7,7 +7,7 @@ import type {
   StoredGatewayCredential,
   StoredNode,
 } from './gateway-state'
-import type { MihomoProxy } from './subscription/types'
+import type { NormalizedNode } from './subscription/types'
 import type { MihomoSupervisor } from './types'
 import { Buffer } from 'node:buffer'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -45,9 +45,26 @@ export interface GatewayConfig {
 export interface GatewayNode {
   id: string
   name: string
-  type?: string
+  type: string
+  enabled: boolean
   healthy?: boolean
   latency?: number | null
+}
+
+export interface GatewayNodeImpact {
+  affectedPortIds: number[]
+}
+
+export type GatewayNodeTestErrorCode =
+  | 'NODE_NOT_FOUND'
+  | 'NODE_NOT_ACTIVE'
+  | 'CONTROLLER_UNAVAILABLE'
+  | 'PROBE_FAILED'
+
+export interface GatewayNodeTestResult {
+  reachable: boolean
+  latencyMs?: number
+  errorCode?: GatewayNodeTestErrorCode
 }
 
 export interface GatewayCredential {
@@ -114,6 +131,11 @@ export interface GatewayManager {
     input: Partial<Pick<GatewayConfig, 'enabled' | 'port' | 'udp'>>,
   ) => Promise<GatewayConfig>
   status: () => Promise<GatewayStatus>
+  listNodes: () => Promise<GatewayNode[]>
+  updateNode: (id: string, input: { enabled: boolean }) => Promise<GatewayNode>
+  testNode: (id: string) => Promise<GatewayNodeTestResult>
+  nodeImpact: (id: string) => Promise<GatewayNodeImpact>
+  deleteNode: (id: string, confirmed: boolean) => Promise<void>
   listPorts: () => Promise<GatewayPort[]>
   updatePort: (
     id: number,
@@ -148,12 +170,14 @@ export interface GatewayManager {
   listAudit: (limit?: number) => Promise<unknown[]>
   replaceNodeSource: (
     sourceId: string,
-    proxies: Array<Record<string, unknown>>,
+    nodes: NormalizedNode[],
     reason: string,
   ) => Promise<GatewayConfig>
-  appendImportedNodes: (
-    proxies: Array<Record<string, unknown>>,
+  replaceNodeSources: (
+    sources: Array<{ sourceId: string; nodes: NormalizedNode[] }>,
+    reason: string,
   ) => Promise<GatewayConfig>
+  appendImportedNodes: (nodes: NormalizedNode[]) => Promise<GatewayConfig>
   removeNodeSource: (sourceId: string, reason: string) => Promise<GatewayConfig>
 }
 
@@ -161,6 +185,7 @@ export class GatewayValidationError extends Error {
   constructor(
     message: string,
     readonly statusCode = 400,
+    readonly details?: GatewayNodeImpact,
   ) {
     super(message)
   }
@@ -673,41 +698,23 @@ export function createGatewayManager(
     })
   }
 
-  async function listNodes(): Promise<GatewayNode[]> {
-    try {
-      const response = await controllerRequest('/proxies')
-      if (!response.ok) return []
-      const body = await response.json()
-      if (!isRecord(body) || !isRecord(body.proxies)) return []
-      return Object.entries(body.proxies)
-        .filter(
-          ([name, value]) =>
-            !MANAGED_GROUPS.has(name) &&
-            name !== 'DIRECT' &&
-            name !== 'REJECT' &&
-            isRecord(value) &&
-            !Array.isArray(value.all),
-        )
-        .map(([name, value]) => {
-          const proxy = value as Record<string, unknown>
-          const history = Array.isArray(proxy.history) ? proxy.history : []
-          const last = history.at(-1)
-          return {
-            id: name,
-            name,
-            ...(typeof proxy.type === 'string' ? { type: proxy.type } : {}),
-            ...(typeof proxy.alive === 'boolean'
-              ? { healthy: proxy.alive }
-              : {}),
-            latency:
-              isRecord(last) && typeof last.delay === 'number'
-                ? last.delay
-                : null,
-          }
-        })
-    } catch {
-      return []
+  async function readNodes(): Promise<GatewayNode[]> {
+    const state = await loadState()
+    if (state.version === 1) {
+      const nodes = new Map<string, GatewayNode>()
+      for (const proxy of Object.values(state.nodeSources).flat()) {
+        const id = stableNodeId(proxy)
+        if (!nodes.has(id))
+          nodes.set(id, {
+            id,
+            name: proxy.name,
+            type: proxy.type,
+            enabled: true,
+          })
+      }
+      return [...nodes.values()]
     }
+    return listPersistedNodes(state)
   }
 
   async function waitForVerification(state: GatewayStateV2): Promise<boolean> {
@@ -775,7 +782,7 @@ export function createGatewayManager(
       return overlay(content, pendingState ?? (await loadState()))
     },
     async getGateway() {
-      return { ...gatewayView(await loadState()), nodes: await listNodes() }
+      return { ...gatewayView(await loadState()), nodes: await readNodes() }
     },
     updateGateway(input) {
       return transaction(async () => {
@@ -833,7 +840,7 @@ export function createGatewayManager(
             .catch(() => activeGroup)
         }
       }
-      const nodes = await listNodes()
+      const nodes = await readNodes()
       return {
         healthy:
           kernel?.status === 'running' &&
@@ -852,6 +859,84 @@ export function createGatewayManager(
     },
     async listPorts() {
       return structuredClone((await loadV2State()).ports)
+    },
+    listNodes: readNodes,
+    updateNode(id, input) {
+      return transaction(async () => {
+        if (typeof input.enabled !== 'boolean')
+          throw new GatewayValidationError('node enabled must be boolean')
+        const next = cloneState(await loadV2State())
+        const matches = findStoredNodes(next, id)
+        if (matches.length === 0)
+          throw new GatewayValidationError('node not found', 404)
+        for (const node of matches) node.enabled = input.enabled
+        if (!input.enabled) disablePortsWithoutEnabledNodeCandidates(next)
+        await apply(next, 'node.update')
+        return gatewayNode(next, id)!
+      })
+    },
+    async testNode(id) {
+      const state = await loadV2State()
+      const node = gatewayNode(state, id)
+      if (!node) return { reachable: false, errorCode: 'NODE_NOT_FOUND' }
+      if (!node.enabled)
+        return { reachable: false, errorCode: 'NODE_NOT_ACTIVE' }
+
+      let response: Response
+      try {
+        response = await controllerRequest(
+          `/proxies/${encodeURIComponent(`GW-NODE-${id}`)}/delay?url=${encodeURIComponent('https://www.gstatic.com/generate_204')}&timeout=5000`,
+        )
+      } catch {
+        return { reachable: false, errorCode: 'CONTROLLER_UNAVAILABLE' }
+      }
+      if (!response.ok) return { reachable: false, errorCode: 'PROBE_FAILED' }
+      try {
+        const body = await response.json()
+        if (
+          !isRecord(body) ||
+          typeof body.delay !== 'number' ||
+          !Number.isFinite(body.delay) ||
+          body.delay <= 0
+        )
+          return { reachable: false, errorCode: 'PROBE_FAILED' }
+        return { reachable: true, latencyMs: body.delay }
+      } catch {
+        return { reachable: false, errorCode: 'PROBE_FAILED' }
+      }
+    },
+    async nodeImpact(id) {
+      const state = await loadV2State()
+      if (!gatewayNode(state, id))
+        throw new GatewayValidationError('node not found', 404)
+      return calculateNodeImpact(state, id)
+    },
+    deleteNode(id, confirmed) {
+      return transaction(async () => {
+        const next = cloneState(await loadV2State())
+        const containingSources = Object.entries(next.nodeSources).filter(
+          ([, source]) => source.nodes.some((node) => node.id === id),
+        )
+        if (containingSources.length === 0)
+          throw new GatewayValidationError('node not found', 404)
+        const impact = calculateNodeImpact(next, id)
+        if (impact.affectedPortIds.length > 0 && !confirmed)
+          throw new GatewayValidationError(
+            'node deletion requires confirmation',
+            409,
+            impact,
+          )
+        for (const [sourceId, source] of containingSources) {
+          source.nodes = source.nodes.filter((node) => node.id !== id)
+          if (
+            sourceId.startsWith('subscription:') &&
+            !source.excludedNodeIds.includes(id)
+          )
+            source.excludedNodeIds.push(id)
+        }
+        removeNodeReferences(next, new Set([id]))
+        await apply(next, 'node.delete')
+      })
     },
     updatePort(id, input) {
       return transaction(async () => {
@@ -1035,35 +1120,70 @@ export function createGatewayManager(
         throw error
       }
     },
-    replaceNodeSource(sourceId, proxies, reason) {
+    replaceNodeSource(sourceId, nodes, reason) {
       return transaction(async () => {
         validateSourceId(sourceId)
-        validateManagedProxies(proxies)
+        const normalized = normalizeManagedNodes(nodes)
         const next = cloneState(await loadV2State())
-        next.nodeSources[sourceId] = {
-          nodes: proxies.map(storedNode),
-          excludedNodeIds: [],
-        }
+        const enabledSnapshot = enabledStateByNodeId(next)
+        replaceNodeSourceInState(next, sourceId, normalized, enabledSnapshot)
+        pruneUnavailableNodeCandidates(next)
+        disablePortsWithoutEnabledNodeCandidates(next)
         await apply(next, reason)
-        return { ...gatewayView(next), nodes: await listNodes() }
+        return { ...gatewayView(next), nodes: listPersistedNodes(next) }
       })
     },
-    appendImportedNodes(proxies) {
+    replaceNodeSources(sources, reason) {
       return transaction(async () => {
-        validateManagedProxies(proxies)
+        if (!Array.isArray(sources))
+          throw new GatewayValidationError('node sources must be an array')
+        const sourceIds = new Set<string>()
+        const replacements = sources.map(({ sourceId, nodes }) => {
+          validateSourceId(sourceId)
+          if (sourceIds.has(sourceId))
+            throw new GatewayValidationError(
+              `duplicate node source ${sourceId}`,
+            )
+          sourceIds.add(sourceId)
+          return { sourceId, nodes: normalizeManagedNodes(nodes) }
+        })
         const next = cloneState(await loadV2State())
+        const enabledSnapshot = enabledStateByNodeId(next)
+        for (const replacement of replacements)
+          replaceNodeSourceInState(
+            next,
+            replacement.sourceId,
+            replacement.nodes,
+            enabledSnapshot,
+          )
+        pruneUnavailableNodeCandidates(next)
+        disablePortsWithoutEnabledNodeCandidates(next)
+        await apply(next, reason)
+        return { ...gatewayView(next), nodes: listPersistedNodes(next) }
+      })
+    },
+    appendImportedNodes(inputNodes) {
+      return transaction(async () => {
+        const normalized = normalizeManagedNodes(inputNodes)
+        const next = cloneState(await loadV2State())
+        const importedIds = new Set(normalized.map(({ id }) => id))
+        for (const source of Object.values(next.nodeSources))
+          source.excludedNodeIds = source.excludedNodeIds.filter(
+            (id) => !importedIds.has(id),
+          )
         const existing = next.nodeSources.manual?.nodes ?? []
-        const nodes = new Map(existing.map((node) => [node.id, node]))
-        for (const proxy of proxies) {
-          const node = storedNode(proxy)
-          nodes.set(node.id, node)
+        const manualNodes = new Map(existing.map((node) => [node.id, node]))
+        const enabledById = enabledStateByNodeId(next)
+        for (const value of normalized) {
+          const node = storedNode(value, enabledById.get(value.id) ?? true)
+          manualNodes.set(node.id, node)
         }
         next.nodeSources.manual = {
-          nodes: [...nodes.values()],
-          excludedNodeIds: [],
+          nodes: [...manualNodes.values()],
+          excludedNodeIds: next.nodeSources.manual?.excludedNodeIds ?? [],
         }
         await apply(next, 'import.apply')
-        return { ...gatewayView(next), nodes: await listNodes() }
+        return { ...gatewayView(next), nodes: listPersistedNodes(next) }
       })
     },
     removeNodeSource(sourceId, reason) {
@@ -1071,23 +1191,10 @@ export function createGatewayManager(
         validateSourceId(sourceId)
         const next = cloneState(await loadV2State())
         delete next.nodeSources[sourceId]
-        const remaining = new Set(
-          Object.values(next.nodeSources).flatMap((source) =>
-            source.nodes.map(({ id }) => id),
-          ),
-        )
-        for (const port of next.ports) {
-          port.hops = port.hops.map((hop) => ({
-            ...hop,
-            nodeIds: hop.nodeIds.filter((id) => remaining.has(id)),
-          }))
-          if (port.hops.some((hop) => hop.nodeIds.length === 0)) {
-            port.enabled = false
-            port.hops = []
-          }
-        }
+        pruneUnavailableNodeCandidates(next)
+        disablePortsWithoutEnabledNodeCandidates(next)
         await apply(next, reason)
-        return { ...gatewayView(next), nodes: await listNodes() }
+        return { ...gatewayView(next), nodes: listPersistedNodes(next) }
       })
     },
   }
@@ -1098,22 +1205,173 @@ function validateSourceId(sourceId: string): void {
     throw new GatewayValidationError('invalid node source id')
 }
 
-function validateManagedProxies(proxies: Array<Record<string, unknown>>): void {
-  if (!Array.isArray(proxies) || proxies.length > 10_000)
-    throw new GatewayValidationError('invalid or excessive node list')
-  for (const proxy of proxies) {
+function normalizeManagedNodes(nodes: NormalizedNode[]): NormalizedNode[] {
+  if (!Array.isArray(nodes))
+    throw new GatewayValidationError('node list must be an array')
+  const unique = new Map<string, NormalizedNode>()
+  for (const value of nodes as unknown[]) {
     if (
-      !isRecord(proxy) ||
-      typeof proxy.name !== 'string' ||
-      !proxy.name.trim()
+      !isRecord(value) ||
+      typeof value.id !== 'string' ||
+      typeof value.originalName !== 'string' ||
+      !value.originalName.trim() ||
+      !isRecord(value.proxy) ||
+      typeof value.proxy.name !== 'string' ||
+      !value.proxy.name.trim() ||
+      typeof value.proxy.type !== 'string' ||
+      typeof value.proxy.server !== 'string' ||
+      !value.proxy.server.trim() ||
+      typeof value.proxy.port !== 'number' ||
+      !Number.isInteger(value.proxy.port) ||
+      value.proxy.port < 1 ||
+      value.proxy.port > 65_535
     )
-      throw new GatewayValidationError('every node must have a name')
+      throw new GatewayValidationError('invalid normalized node')
+    const node = structuredClone(value) as unknown as NormalizedNode
+    if (node.id !== stableNodeId(node.proxy))
+      throw new GatewayValidationError(
+        `node ${node.id} does not match its stable node ID`,
+      )
+    unique.set(node.id, node)
+  }
+  return [...unique.values()]
+}
+
+function storedNode(node: NormalizedNode, enabled: boolean): StoredNode {
+  return {
+    id: node.id,
+    enabled,
+    proxy: structuredClone(node.proxy),
   }
 }
 
-function storedNode(proxy: Record<string, unknown>): StoredNode {
-  const value = structuredClone(proxy) as unknown as MihomoProxy
-  return { id: stableNodeId(value), enabled: true, proxy: value }
+function enabledStateByNodeId(state: GatewayStateV2): Map<string, boolean> {
+  const enabled = new Map<string, boolean>()
+  for (const source of Object.values(state.nodeSources))
+    for (const node of source.nodes)
+      enabled.set(node.id, (enabled.get(node.id) ?? false) || node.enabled)
+  return enabled
+}
+
+function replaceNodeSourceInState(
+  state: GatewayStateV2,
+  sourceId: string,
+  nodes: NormalizedNode[],
+  enabled: ReadonlyMap<string, boolean>,
+): void {
+  const excludedNodeIds = state.nodeSources[sourceId]?.excludedNodeIds ?? []
+  const excluded = new Set(excludedNodeIds)
+  state.nodeSources[sourceId] = {
+    nodes: nodes
+      .filter(({ id }) => !excluded.has(id))
+      .map((node) => storedNode(node, enabled.get(node.id) ?? true)),
+    excludedNodeIds: [...excludedNodeIds],
+  }
+}
+
+function listPersistedNodes(state: GatewayStateV2): GatewayNode[] {
+  const nodes = new Map<string, GatewayNode>()
+  const sources = Object.entries(state.nodeSources).sort(
+    ([left], [right]) =>
+      Number(right === 'manual') - Number(left === 'manual') ||
+      left.localeCompare(right),
+  )
+  for (const [, source] of sources) {
+    for (const node of source.nodes) {
+      const existing = nodes.get(node.id)
+      if (existing) {
+        existing.enabled ||= node.enabled
+      } else {
+        nodes.set(node.id, {
+          id: node.id,
+          name: node.proxy.name,
+          type: node.proxy.type,
+          enabled: node.enabled,
+        })
+      }
+    }
+  }
+  return [...nodes.values()]
+}
+
+function gatewayNode(
+  state: GatewayStateV2,
+  id: string,
+): GatewayNode | undefined {
+  return listPersistedNodes(state).find((node) => node.id === id)
+}
+
+function findStoredNodes(state: GatewayStateV2, id: string): StoredNode[] {
+  return Object.values(state.nodeSources).flatMap((source) =>
+    source.nodes.filter((node) => node.id === id),
+  )
+}
+
+function calculateNodeImpact(
+  state: GatewayStateV2,
+  id: string,
+): GatewayNodeImpact {
+  return {
+    affectedPortIds: state.ports
+      .filter((port) => port.hops.some((hop) => hop.nodeIds.includes(id)))
+      .map(({ id: portId }) => portId),
+  }
+}
+
+function removeNodeReferences(
+  state: GatewayStateV2,
+  nodeIds: ReadonlySet<string>,
+): void {
+  for (const port of state.ports) {
+    port.hops = port.hops
+      .map((hop) => ({
+        ...hop,
+        nodeIds: hop.nodeIds.filter((id) => !nodeIds.has(id)),
+      }))
+      .filter((hop) => hop.nodeIds.length > 0)
+    if (port.hops.length === 0) port.enabled = false
+  }
+}
+
+function pruneUnavailableNodeCandidates(state: GatewayStateV2): void {
+  const available = new Set(
+    Object.values(state.nodeSources).flatMap((source) =>
+      source.nodes.map(({ id }) => id),
+    ),
+  )
+  const affectedPortIds: number[] = []
+  const candidateHops = state.ports.map((port) => {
+    const hops = port.hops.map((hop) => ({
+      ...hop,
+      nodeIds: hop.nodeIds.filter((id) => available.has(id)),
+    }))
+    if (hops.some((hop) => hop.nodeIds.length === 0))
+      affectedPortIds.push(port.id)
+    return hops
+  })
+  if (affectedPortIds.length > 0)
+    throw new GatewayValidationError(
+      'node source update would remove the final candidate from a hop',
+      409,
+      { affectedPortIds },
+    )
+  for (const [index, port] of state.ports.entries())
+    port.hops = candidateHops[index]!
+}
+
+function disablePortsWithoutEnabledNodeCandidates(state: GatewayStateV2): void {
+  const enabled = new Set(
+    Object.values(state.nodeSources).flatMap((source) =>
+      source.nodes.filter((node) => node.enabled).map(({ id }) => id),
+    ),
+  )
+  for (const port of state.ports) {
+    if (
+      port.enabled &&
+      port.hops.some((hop) => !hop.nodeIds.some((id) => enabled.has(id)))
+    )
+      port.enabled = false
+  }
 }
 
 function deduplicateManagedProxies(
