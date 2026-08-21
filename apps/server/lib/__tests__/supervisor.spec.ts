@@ -33,7 +33,6 @@ describe('apps/server lib/supervisor', () => {
     delete process.env.DATA_DIR
     delete process.env.MIHOMO_BIN
     delete process.env.CLASH_SECRET
-    delete process.env.CONTROL_TOKEN
     delete process.env.GITHUB_TOKEN
     delete process.env.ADMIN_PASSWORD
     delete process.env.ADMIN_PASSWORD_FILE

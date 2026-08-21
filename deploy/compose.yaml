@@ -2,54 +2,33 @@ name: metacubexd-gateway
 
 services:
   gateway:
-    image: '${GATEWAY_IMAGE:-ghcr.io/x1aodai/metacubexd-socks-gateway:latest}'
-    pull_policy: always
-    container_name: metacubexd-gateway
+    image: '${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to an immutable @sha256 digest}'
     restart: unless-stopped
     network_mode: host
     environment:
-      NITRO_HOST: '${CONTROL_BIND_ADDRESS:-127.0.0.1}'
-      CONTROL_PORT: '8080'
-      CLASH_API_BIND_ADDRESS: '${CLASH_API_BIND_ADDRESS:-127.0.0.1}'
-      CLASH_API_PORT: '9090'
-      CLASH_API_CORS_ORIGINS: '${CLASH_API_CORS_ORIGINS:-}'
-      DEFAULT_BACKEND_URL: '${DEFAULT_BACKEND_URL:-}'
-      PUBLIC_DIRECT_ACCESS: '${PUBLIC_DIRECT_ACCESS:-false}'
-      MIXED_PORT: '0'
-      SOCKS_PORT_MIN: '${SOCKS_PORT_MIN:-1080}'
-      SOCKS_PORT_MAX: '${SOCKS_PORT_MAX:-1099}'
+      TZ: '${TZ:-Asia/Shanghai}'
       SESSION_COOKIE_SECURE: '${SESSION_COOKIE_SECURE:-true}'
-      TRUSTED_PROXY: '${TRUSTED_PROXY:-127.0.0.1}'
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       GATEWAY_MASTER_KEY_FILE: /run/secrets/gateway_master_key
-      CONTROL_TOKEN_FILE: /run/secrets/control_token
       CLASH_SECRET_FILE: /run/secrets/clash_secret
-      TZ: '${TZ:-Asia/Shanghai}'
     secrets:
       - admin_password
       - gateway_master_key
-      - control_token
       - clash_secret
     volumes:
       - gateway-data:/data
     tmpfs:
       - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    read_only: true
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/api/control/health']
-      interval: 30s
-      timeout: 5s
-      start_period: 15s
-      retries: 3
 
 secrets:
   admin_password:
     file: ./secrets/admin_password
   gateway_master_key:
     file: ./secrets/gateway_master_key
-  control_token:
-    file: ./secrets/control_token
   clash_secret:
     file: ./secrets/clash_secret
 

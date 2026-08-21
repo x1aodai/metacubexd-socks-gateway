@@ -17,6 +17,8 @@ logs
 .env.*
 !.env.example
 deploy/secrets/
+data/
+.runtime/
 
 # IDE / Editor
 .idea

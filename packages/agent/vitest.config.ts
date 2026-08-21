@@ -5,5 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Parallel encrypted-state tests can exceed Vitest's 5s default.
+    testTimeout: 15_000,
   },
 })
