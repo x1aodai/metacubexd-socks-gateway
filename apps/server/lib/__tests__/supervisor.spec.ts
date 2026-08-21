@@ -44,18 +44,18 @@ describe('apps/server lib/supervisor', () => {
     const env = serverEnv()
     expect(env.controlPort).toBe(8080)
     expect(env.clashApiPort).toBe(9090)
-    expect(env.clashApiBindAddress).toBe('127.0.0.1')
-    expect(env.clashApiCorsOrigins).toEqual([])
-    expect(env.mixedPort).toBe(7890)
     expect(env.dataDir).toBe('/data')
     expect(env.mihomoBin).toBe('/usr/local/bin/mihomo')
     expect(env.githubToken).toBe('')
-    expect(env.socksPortMin).toBe(1080)
-    expect(env.socksPortMax).toBe(1099)
     expect(env.publicDirectAccess).toBe(false)
+    expect(env).not.toHaveProperty('clashApiBindAddress')
+    expect(env).not.toHaveProperty('clashApiCorsOrigins')
+    expect(env).not.toHaveProperty('mixedPort')
+    expect(env).not.toHaveProperty('socksPortMin')
+    expect(env).not.toHaveProperty('socksPortMax')
   })
 
-  it('honours overridden ports/paths from env', async () => {
+  it('ignores removed gateway env while retaining unrelated runtime env', async () => {
     process.env.CONTROL_PORT = '18080'
     process.env.CLASH_API_PORT = '19090'
     process.env.CLASH_API_BIND_ADDRESS = '0.0.0.0'
@@ -70,24 +70,24 @@ describe('apps/server lib/supervisor', () => {
     const env = serverEnv()
     expect(env.controlPort).toBe(18080)
     expect(env.clashApiPort).toBe(19090)
-    expect(env.clashApiBindAddress).toBe('0.0.0.0')
-    expect(env.clashApiCorsOrigins).toEqual([
-      'http://gateway.example.com:8080',
-      'http://gateway.example.net:8080',
-    ])
-    expect(env.mixedPort).toBe(17890)
     expect(env.dataDir).toBe('/srv/data')
     expect(env.mihomoBin).toBe('/opt/mihomo')
     expect(env.githubToken).toBe('github-token')
     expect(env.publicDirectAccess).toBe(true)
+    expect(env).not.toHaveProperty('clashApiBindAddress')
+    expect(env).not.toHaveProperty('clashApiCorsOrigins')
+    expect(env).not.toHaveProperty('mixedPort')
   })
 
-  it('builds the agent exactly once with env-derived options (singleton)', async () => {
+  it('builds the agent once with fixed Controller and minimal gateway options', async () => {
     process.env.DATA_DIR = '/data'
     process.env.MIHOMO_BIN = '/usr/local/bin/mihomo'
     process.env.CLASH_API_PORT = '9090'
     process.env.CLASH_API_BIND_ADDRESS = '0.0.0.0'
     process.env.CLASH_API_CORS_ORIGINS = 'http://gateway.example.com:8080'
+    process.env.MIXED_PORT = '17890'
+    process.env.SOCKS_PORT_MIN = '20001'
+    process.env.SOCKS_PORT_MAX = '20010'
     process.env.CLASH_SECRET = 'clash-x'
     process.env.GATEWAY_MASTER_KEY = 'gateway-key'
     const { getAgent } = await import('../supervisor')
@@ -101,18 +101,12 @@ describe('apps/server lib/supervisor', () => {
     expect(opts.profilesDir).toBe('/data/profiles')
     expect(opts.activeConfigPath).toBe('/data/active.yaml')
     expect(opts.agentToken).toBeUndefined()
-    expect(opts.externalController).toBe('0.0.0.0:9090')
+    expect(opts.externalController).toBe('127.0.0.1:9090')
     expect(opts.secret).toBe('clash-x')
     expect(opts.mixedPort).toBeUndefined()
-    expect(opts.gateway).toEqual(
-      expect.objectContaining({
-        dataDir: '/data',
-        masterKey: 'gateway-key',
-        defaultPort: 1080,
-        minPort: 1080,
-        maxPort: 1099,
-        controllerCorsOrigins: ['http://gateway.example.com:8080'],
-      }),
-    )
+    expect(opts.gateway).toEqual({
+      dataDir: '/data',
+      masterKey: 'gateway-key',
+    })
   })
 })

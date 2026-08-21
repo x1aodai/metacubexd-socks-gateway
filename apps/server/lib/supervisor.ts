@@ -6,9 +6,6 @@ import { createAgent } from '@metacubexd/agent'
 export interface ServerEnv {
   controlPort: number
   clashApiPort: number
-  clashApiBindAddress: string
-  clashApiCorsOrigins: string[]
-  mixedPort: number
   dataDir: string
   mihomoBin: string
   controlToken: string
@@ -17,8 +14,6 @@ export interface ServerEnv {
   defaultBackendURL: string
   adminPassword: string
   gatewayMasterKey: string
-  socksPortMin: number
-  socksPortMax: number
   sessionCookieSecure: boolean
   publicDirectAccess: boolean
 }
@@ -47,13 +42,6 @@ export function serverEnv(): ServerEnv {
   return {
     controlPort: int(process.env.CONTROL_PORT, 8080),
     clashApiPort: int(process.env.CLASH_API_PORT, 9090),
-    clashApiBindAddress:
-      process.env.CLASH_API_BIND_ADDRESS?.trim() || '127.0.0.1',
-    clashApiCorsOrigins: (process.env.CLASH_API_CORS_ORIGINS ?? '')
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean),
-    mixedPort: int(process.env.MIXED_PORT, 7890),
     dataDir: process.env.DATA_DIR ?? '/data',
     mihomoBin: process.env.MIHOMO_BIN ?? '/usr/local/bin/mihomo',
     controlToken: process.env.CONTROL_TOKEN ?? '',
@@ -62,8 +50,6 @@ export function serverEnv(): ServerEnv {
     defaultBackendURL: process.env.DEFAULT_BACKEND_URL ?? '',
     adminPassword: secret('ADMIN_PASSWORD', 'ADMIN_PASSWORD_FILE'),
     gatewayMasterKey: secret('GATEWAY_MASTER_KEY', 'GATEWAY_MASTER_KEY_FILE'),
-    socksPortMin: int(process.env.SOCKS_PORT_MIN, 1080),
-    socksPortMax: int(process.env.SOCKS_PORT_MAX, 1099),
     sessionCookieSecure: process.env.SESSION_COOKIE_SECURE !== 'false',
     publicDirectAccess: process.env.PUBLIC_DIRECT_ACCESS === 'true',
   }
@@ -88,19 +74,13 @@ export function getAgent(): Agent {
     homeDir: env.dataDir,
     profilesDir: dataPath(env.dataDir, 'profiles'),
     activeConfigPath: dataPath(env.dataDir, 'active.yaml'),
-    // Loopback remains the safe default. A separately hosted reverse proxy may
-    // bind this to 0.0.0.0 and restrict the origin port to that proxy's IP.
-    externalController: `${env.clashApiBindAddress}:${env.clashApiPort}`,
+    externalController: '127.0.0.1:9090',
     secret: env.clashSecret,
     // No mixed-port is configured: the managed gateway overlay owns the only
     // public listener and enforces authenticated SOCKS on the selected port.
     gateway: {
       dataDir: env.dataDir,
       masterKey: env.gatewayMasterKey || undefined,
-      defaultPort: env.socksPortMin,
-      minPort: env.socksPortMin,
-      maxPort: env.socksPortMax,
-      controllerCorsOrigins: env.clashApiCorsOrigins,
     },
   })
   return agentSingleton

@@ -101,9 +101,6 @@ export interface GatewayManagerOptions {
   dataDir: string
   activeConfigPath: string
   masterKey?: string
-  defaultPort?: number
-  minPort?: number
-  maxPort?: number
   controllerUrl: string
   controllerSecret?: string
   controllerCorsOrigins?: string[]
