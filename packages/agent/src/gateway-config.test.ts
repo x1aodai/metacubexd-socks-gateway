@@ -1,4 +1,4 @@
-import type { GatewayStateV2, StoredNode } from './gateway-state'
+import type { GatewayMode, GatewayStateV2, StoredNode } from './gateway-state'
 import type { MihomoProxy } from './subscription/types'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
@@ -96,7 +96,43 @@ function rendered(base: string, state: GatewayStateV2) {
   return parse(generateGatewayConfig(base, state)) as Record<string, unknown>
 }
 
-describe('single-hop gateway config generator', () => {
+const modeTypes: Record<GatewayMode, string> = {
+  manual: 'select',
+  auto: 'url-test',
+  failover: 'fallback',
+}
+
+const twoHopModePairs = (
+  ['manual', 'auto', 'failover'] as GatewayMode[]
+).flatMap((first) =>
+  (['manual', 'auto', 'failover'] as GatewayMode[]).map((second) => ({
+    first,
+    second,
+  })),
+)
+
+function onlyFirstPorts(state: GatewayStateV2, count: number): void {
+  for (const port of state.ports.slice(count)) port.enabled = false
+}
+
+function portObjects(config: Record<string, unknown>, port: number) {
+  const prefix = `GW-${port}-`
+  const listener = `gateway-socks-${port}`
+  return {
+    listeners: (config.listeners as Array<Record<string, unknown>>).filter(
+      ({ name }) => name === listener,
+    ),
+    groups: (config['proxy-groups'] as Array<Record<string, unknown>>).filter(
+      ({ name }) => typeof name === 'string' && name.startsWith(prefix),
+    ),
+    proxies: (config.proxies as Array<Record<string, unknown>>).filter(
+      ({ name }) => typeof name === 'string' && name.startsWith(prefix),
+    ),
+    rules: (config.rules as string[]).filter((rule) => rule.includes(listener)),
+  }
+}
+
+describe('gateway config generator', () => {
   it('generates ten isolated authenticated listeners and all three group modes', () => {
     const { state, nodes } = tenPortState()
     const config = rendered('{}', state)
@@ -209,6 +245,137 @@ rules:
     expect(firstGroup.proxies).toEqual([`GW-NODE-${nodes[0]!.id}`, 'REJECT'])
   })
 
+  it.each(twoHopModePairs)(
+    'maps two-hop $first/$second modes to independent Mihomo groups',
+    ({ first, second }) => {
+      const { state, nodes } = tenPortState()
+      onlyFirstPorts(state, 1)
+      state.ports[0]!.hops = [
+        { mode: first, nodeIds: [nodes[0]!.id] },
+        { mode: second, nodeIds: [nodes[1]!.id] },
+      ]
+      const config = rendered('{}', state)
+      const groups = config['proxy-groups'] as Array<Record<string, unknown>>
+      const listeners = config.listeners as Array<Record<string, unknown>>
+
+      expect(groups.map(({ name, type }) => ({ name, type }))).toEqual([
+        { name: 'GW-10001-H1', type: modeTypes[first] },
+        { name: 'GW-10001-H2', type: modeTypes[second] },
+      ])
+      expect(listeners[0]).toMatchObject({ proxy: 'GW-10001-H2' })
+      expect(config.rules).toEqual([
+        'IN-NAME,gateway-socks-10001,GW-10001-H2',
+        'MATCH,REJECT',
+      ])
+    },
+  )
+
+  it('creates a sanitized port-private landing clone without mutating input or global nodes', () => {
+    const { state, nodes } = tenPortState()
+    onlyFirstPorts(state, 1)
+    const landing = storedNode(proxy('landing', 2080, { udp: true }))
+    state.nodeSources.manual!.nodes.push(landing)
+    state.ports[0]!.hops = [
+      { mode: 'manual', nodeIds: [nodes[0]!.id] },
+      { mode: 'failover', nodeIds: [landing.id] },
+    ]
+    const original = structuredClone(state)
+    const config = rendered('{}', state)
+    const proxies = config.proxies as Array<Record<string, unknown>>
+    const globalNode = proxies.find(
+      ({ name }) => name === `GW-NODE-${nodes[0]!.id}`,
+    )
+    const derivedName = `GW-10001-H2-${landing.id}`
+    const derivedNode = proxies.find(({ name }) => name === derivedName)
+    const { name: _name, udp: _udp, ...connection } = landing.proxy
+
+    expect(proxies).toHaveLength(2)
+    expect(globalNode).not.toHaveProperty('dialer-proxy')
+    expect(derivedNode).toEqual({
+      ...connection,
+      name: derivedName,
+      'dialer-proxy': 'GW-10001-H1',
+    })
+    expect(state).toEqual(original)
+    expect(JSON.stringify(config)).not.toContain('DIRECT')
+    expect(JSON.stringify(config)).not.toContain('"udp":true')
+  })
+
+  it('reuses nodes across ports and roles with collision-free private clones', () => {
+    const { state, nodes } = tenPortState()
+    onlyFirstPorts(state, 3)
+    state.ports[0]!.hops = [
+      { mode: 'manual', nodeIds: [nodes[0]!.id] },
+      { mode: 'manual', nodeIds: [nodes[1]!.id] },
+    ]
+    state.ports[1]!.hops = [
+      { mode: 'manual', nodeIds: [nodes[2]!.id] },
+      { mode: 'auto', nodeIds: [nodes[1]!.id] },
+    ]
+    state.ports[2]!.hops = [
+      { mode: 'failover', nodeIds: [nodes[1]!.id] },
+      { mode: 'manual', nodeIds: [nodes[0]!.id] },
+    ]
+    const config = rendered('{}', state)
+    const proxies = config.proxies as Array<Record<string, unknown>>
+    const names = proxies.map(({ name }) => name)
+
+    expect(proxies).toHaveLength(6)
+    expect(new Set(names).size).toBe(6)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        `GW-NODE-${nodes[0]!.id}`,
+        `GW-NODE-${nodes[1]!.id}`,
+        `GW-NODE-${nodes[2]!.id}`,
+        `GW-10001-H2-${nodes[1]!.id}`,
+        `GW-10002-H2-${nodes[1]!.id}`,
+        `GW-10003-H2-${nodes[0]!.id}`,
+      ]),
+    )
+    expect(
+      proxies.find(({ name }) => name === `GW-10002-H2-${nodes[1]!.id}`),
+    ).toMatchObject({ 'dialer-proxy': 'GW-10002-H1' })
+    expect(
+      proxies
+        .filter(({ name }) => String(name).startsWith('GW-NODE-'))
+        .every((item) => !('dialer-proxy' in item)),
+    ).toBe(true)
+  })
+
+  it('rejects overlapping candidates in consecutive hops', () => {
+    const { state, nodes } = tenPortState()
+    onlyFirstPorts(state, 1)
+    state.ports[0]!.hops = [
+      { mode: 'auto', nodeIds: [nodes[0]!.id, nodes[1]!.id] },
+      { mode: 'failover', nodeIds: [nodes[1]!.id, nodes[2]!.id] },
+    ]
+
+    expect(() => generateGatewayConfig('{}', state)).toThrow(
+      /same node in consecutive hops/i,
+    )
+  })
+
+  it('keeps another port related objects byte-for-byte stable when one port changes', () => {
+    const { state, nodes } = tenPortState()
+    onlyFirstPorts(state, 2)
+    state.ports[0]!.hops = [
+      { mode: 'manual', nodeIds: [nodes[0]!.id] },
+      { mode: 'manual', nodeIds: [nodes[1]!.id] },
+    ]
+    state.ports[1]!.hops = [
+      { mode: 'manual', nodeIds: [nodes[2]!.id] },
+      { mode: 'manual', nodeIds: [nodes[1]!.id] },
+    ]
+    const before = rendered('{}', state)
+    state.ports[0]!.hops[1] = {
+      mode: 'auto',
+      nodeIds: [nodes[2]!.id],
+    }
+    const after = rendered('{}', state)
+
+    expect(portObjects(after, 10002)).toEqual(portObjects(before, 10002))
+  })
+
   it('only emits enabled node candidates and falls back to REJECT', () => {
     const { state, nodes } = tenPortState()
     for (const source of Object.values(state.nodeSources)) {
@@ -293,18 +460,9 @@ rules:
     expect(JSON.stringify(config)).not.toContain('"udp":true')
   })
 
-  it('validates state and rejects two-hop input until the Task 3 generator exists', () => {
-    const { state, nodes } = tenPortState()
+  it('validates state before generating config', () => {
+    const { state } = tenPortState()
     state.ports[0]!.port = 11001
     expect(() => generateGatewayConfig('{}', state)).toThrow(/fixed port/i)
-
-    const twoHop = tenPortState().state
-    twoHop.ports[0]!.hops = [
-      { mode: 'manual', nodeIds: [nodes[0]!.id] },
-      { mode: 'manual', nodeIds: [nodes[1]!.id] },
-    ]
-    expect(() => generateGatewayConfig('{}', twoHop)).toThrow(
-      /single-hop generator/i,
-    )
   })
 })

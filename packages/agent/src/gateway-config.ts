@@ -32,20 +32,16 @@ export function generateGatewayConfig(
   validateGatewayStateV2(state)
 
   const enabledPorts = state.ports.filter(({ enabled }) => enabled)
-  for (const port of enabledPorts) {
-    if (port.hops.length !== 1)
-      throw new Error(
-        `single-hop generator cannot render gateway port ${port.port}`,
-      )
-  }
-
   const nodes = collectEnabledNodes(state)
-  const referencedNodeIds = new Set(
+  const firstHopNodeIds = new Set(
     enabledPorts.flatMap((port) => port.hops[0]!.nodeIds),
   )
-  const proxies = [...nodes.values()]
-    .filter(({ id }) => referencedNodeIds.has(id))
-    .map(renderProxy)
+  const proxies = [
+    ...[...nodes.values()]
+      .filter(({ id }) => firstHopNodeIds.has(id))
+      .map((node) => renderProxy(node, runtimeNodeName(node.id))),
+    ...enabledPorts.flatMap((port) => renderLandingProxies(port, nodes)),
+  ]
   const credentials = new Map(
     state.credentials.map((credential) => [credential.id, credential]),
   )
@@ -56,7 +52,7 @@ export function generateGatewayConfig(
     listen: '0.0.0.0',
     port: port.port,
     udp: false,
-    proxy: groupName(port.port),
+    proxy: finalGroupName(port),
     users: port.credentialIds
       .map((id) => credentials.get(id))
       .filter((credential) => credential?.enabled)
@@ -65,7 +61,9 @@ export function generateGatewayConfig(
         password: credential!.password,
       })),
   }))
-  const groups = enabledPorts.map((port) => renderGroup(port, nodes))
+  const groups = enabledPorts.flatMap((port) =>
+    port.hops.map((_hop, index) => renderGroup(port, index, nodes)),
+  )
 
   return stringify(
     {
@@ -76,7 +74,7 @@ export function generateGatewayConfig(
       rules: [
         ...enabledPorts.map(
           (port) =>
-            `IN-NAME,${listenerName(port.port)},${groupName(port.port)}`,
+            `IN-NAME,${listenerName(port.port)},${finalGroupName(port)}`,
         ),
         'MATCH,REJECT',
       ],
@@ -115,24 +113,47 @@ function assertNoRouteControl(node: StoredNode): void {
   }
 }
 
-function renderProxy(node: StoredNode): MihomoProxy {
+function renderProxy(node: StoredNode, name: string): MihomoProxy {
   const { name: _name, udp: _udp, ...connection } = node.proxy
   return {
     ...connection,
-    name: runtimeNodeName(node.id),
+    name,
   } as MihomoProxy
+}
+
+function renderLandingProxies(
+  port: GatewayPort,
+  enabledNodes: ReadonlyMap<string, StoredNode>,
+): MihomoProxy[] {
+  const landingHop = port.hops[1]
+  if (!landingHop) return []
+  return landingHop.nodeIds.flatMap((id) => {
+    const node = enabledNodes.get(id)
+    if (!node) return []
+    return [
+      {
+        ...renderProxy(node, landingNodeName(port.port, id)),
+        'dialer-proxy': groupName(port.port, 1),
+      },
+    ]
+  })
 }
 
 function renderGroup(
   port: GatewayPort,
+  hopIndex: number,
   enabledNodes: ReadonlyMap<string, StoredNode>,
 ): Record<string, unknown> {
-  const hop = port.hops[0]!
+  const hop = port.hops[hopIndex]!
   const group = {
-    name: groupName(port.port),
+    name: groupName(port.port, hopIndex + 1),
     type: MODE_TYPES[hop.mode],
     proxies: [
-      ...hop.nodeIds.filter((id) => enabledNodes.has(id)).map(runtimeNodeName),
+      ...hop.nodeIds
+        .filter((id) => enabledNodes.has(id))
+        .map((id) =>
+          hopIndex === 0 ? runtimeNodeName(id) : landingNodeName(port.port, id),
+        ),
       'REJECT',
     ],
   }
@@ -149,10 +170,18 @@ function listenerName(port: number): string {
   return `gateway-socks-${port}`
 }
 
-function groupName(port: number): string {
-  return `GW-${port}-H1`
+function groupName(port: number, hop: number): string {
+  return `GW-${port}-H${hop}`
+}
+
+function finalGroupName(port: GatewayPort): string {
+  return groupName(port.port, port.hops.length)
 }
 
 function runtimeNodeName(id: string): string {
   return `GW-NODE-${id}`
+}
+
+function landingNodeName(port: number, id: string): string {
+  return `GW-${port}-H2-${id}`
 }
