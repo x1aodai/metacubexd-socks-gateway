@@ -1,78 +1,66 @@
 import type { GatewayAuthSession } from '~/types/gateway'
-import { HTTPError } from 'ky'
 
 export type GatewayAuthState =
-  'unknown' | 'checking' | 'authenticated' | 'unauthenticated' | 'unavailable'
+  'unknown' | 'checking' | 'authenticated' | 'unauthenticated'
 
 const state = ref<GatewayAuthState>('unknown')
 const user = ref('')
 let sessionRequest: Promise<GatewayAuthState> | null = null
 
-function applySession(session: GatewayAuthSession): GatewayAuthState {
-  state.value = session.authenticated ? 'authenticated' : 'unauthenticated'
-  user.value =
-    typeof session.user === 'string'
-      ? session.user
-      : session.user?.username || ''
+function unauthenticated(): GatewayAuthState {
+  state.value = 'unauthenticated'
+  user.value = ''
   return state.value
 }
 
-function isStandaloneAuthMiss(error: unknown): boolean {
-  if (error instanceof HTTPError) return error.response.status === 404
-  if (error instanceof SyntaxError) return true
-  if (typeof window === 'undefined') return true
-  return (
-    window.location?.protocol === 'file:' ||
-    (window as unknown as { metacubexd?: { isDesktop?: boolean } }).metacubexd
-      ?.isDesktop === true
+function applySession(session: GatewayAuthSession): GatewayAuthState {
+  if (
+    session.authenticated !== true ||
+    typeof session.user !== 'string' ||
+    session.user.length === 0 ||
+    typeof session.csrfToken !== 'string' ||
+    session.csrfToken.length === 0
   )
+    return unauthenticated()
+  state.value = 'authenticated'
+  user.value = session.user
+  return state.value
 }
 
 export function useGatewayAuth() {
   const api = useGatewayApi()
 
-  async function check(force = false): Promise<GatewayAuthState> {
-    if (!force && state.value !== 'unknown' && state.value !== 'checking') {
+  async function check(): Promise<GatewayAuthState> {
+    if (state.value !== 'unknown' && state.value !== 'checking')
       return state.value
-    }
-    if (!force && sessionRequest) return sessionRequest
+    if (sessionRequest) return sessionRequest
 
     state.value = 'checking'
     sessionRequest = api
       .getSession()
       .then(applySession)
-      .catch((error: unknown) => {
-        if (isStandaloneAuthMiss(error)) {
-          // A missing auth endpoint means this is the normal static/desktop UI.
-          // Do not intercept its existing navigation.
-          state.value = 'unavailable'
-        } else {
-          // HTTP(S) server errors and network failures fail closed. The API is
-          // guarded independently, but the administration shell should not
-          // expose itself while its session state is unknown.
-          state.value = 'unauthenticated'
-        }
-        return state.value
-      })
+      .catch(() => unauthenticated())
       .finally(() => {
         sessionRequest = null
       })
     return sessionRequest
   }
 
-  async function login(password: string) {
-    const session = await api.login(password)
-    return applySession(
-      session.authenticated === false
-        ? session
-        : { ...session, authenticated: true },
-    )
+  async function login(password: string): Promise<GatewayAuthState> {
+    try {
+      return applySession(await api.login(password))
+    } catch (error) {
+      unauthenticated()
+      throw error
+    }
   }
 
-  async function logout() {
-    await api.logout()
-    state.value = 'unauthenticated'
-    user.value = ''
+  async function logout(): Promise<void> {
+    try {
+      await api.logout()
+    } finally {
+      unauthenticated()
+    }
   }
 
   return {

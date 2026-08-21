@@ -8,13 +8,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
   }
 
-  // The all-in-one server requires one administrator session for the complete
-  // dashboard. A standalone/static deployment has no auth endpoint; the probe
-  // reports `unavailable` and existing endpoint navigation continues unchanged.
   const gatewayAuth = useGatewayAuth()
-  const state = await gatewayAuth.check(
-    gatewayAuth.state.value !== 'unavailable',
-  )
+  const state = await gatewayAuth.check()
   if (to.path !== '/login' && state === 'unauthenticated') {
     return navigateTo(
       { path: '/login', query: { redirect: to.fullPath } },
@@ -23,7 +18,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
   if (to.path === '/login') {
     if (state === 'authenticated') {
-      return navigateTo('/gateway', { replace: true })
+      return navigateTo('/ports', { replace: true })
     }
     return
   }

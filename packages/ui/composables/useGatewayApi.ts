@@ -1,15 +1,19 @@
 import type {
-  GatewayAuditEntry,
   GatewayAuthSession,
-  GatewayConfig,
+  GatewayCollection,
+  GatewayCreatedCredential,
   GatewayCredential,
-  GatewayCredentialSecret,
+  GatewayImportApplyInput,
   GatewayImportPreview,
-  GatewayListResponse,
-  GatewayOutboundMode,
+  GatewayNode,
+  GatewayNodeImpact,
+  GatewayNodeTestResult,
+  GatewayPort,
   GatewayRevision,
+  GatewayRotatedCredential,
   GatewayStatus,
   GatewaySubscription,
+  GatewaySubscriptionRefreshResult,
 } from '~/types/gateway'
 import ky from 'ky'
 
@@ -22,35 +26,8 @@ export function resolveGatewayApiBase(): string {
   return `${window.location.origin.replace(/\/$/, '')}/api`
 }
 
-export function readGatewayCsrfCookie(cookie = ''): string {
-  const accepted = new Set(['csrf_token', 'csrfToken', 'XSRF-TOKEN'])
-  for (const part of cookie.split(';')) {
-    const separator = part.indexOf('=')
-    if (separator < 0) continue
-    const key = part.slice(0, separator).trim()
-    if (!accepted.has(key)) continue
-    try {
-      return decodeURIComponent(part.slice(separator + 1).trim())
-    } catch {
-      return part.slice(separator + 1).trim()
-    }
-  }
-  return ''
-}
-
-export function unwrapGatewayList<T>(value: GatewayListResponse<T>): T[] {
-  return Array.isArray(value)
-    ? value
-    : Array.isArray(value.items)
-      ? value.items
-      : []
-}
-
 export function getGatewayCsrfToken(): string {
-  if (responseCsrfToken) return responseCsrfToken
-  return typeof document === 'undefined'
-    ? ''
-    : readGatewayCsrfCookie(document.cookie)
+  return responseCsrfToken
 }
 
 function mutationOptions(json?: unknown) {
@@ -63,45 +40,16 @@ function mutationOptions(json?: unknown) {
 
 async function parseJson<T>(request: Promise<Response>): Promise<T> {
   const response = await request
-  const headerToken = response.headers.get('X-CSRF-Token')
   const body = (await response.json()) as T
-  const bodyToken =
-    body && typeof body === 'object' && 'csrfToken' in body
-      ? String((body as { csrfToken?: unknown }).csrfToken || '')
-      : ''
-  if (headerToken || bodyToken) responseCsrfToken = headerToken || bodyToken
+  if (body && typeof body === 'object' && 'authenticated' in body) {
+    if ((body as { authenticated?: unknown }).authenticated === false)
+      responseCsrfToken = ''
+  }
+  if (body && typeof body === 'object' && 'csrfToken' in body) {
+    const token = (body as { csrfToken?: unknown }).csrfToken
+    if (typeof token === 'string') responseCsrfToken = token
+  }
   return body
-}
-
-interface RawImportPreview {
-  previewId?: string
-  nodes?: Array<{ id: string; originalName?: string; type?: string }>
-  issues?: Array<{ code?: string; message: string; index?: number }>
-  summary?: {
-    valid?: number
-    skipped?: number
-    protocols?: Record<string, number>
-  }
-}
-
-function normalizeImportPreview(
-  value: GatewayImportPreview | RawImportPreview,
-): GatewayImportPreview {
-  if ('validCount' in value) return value
-  return {
-    previewId: value.previewId,
-    validCount: value.summary?.valid || 0,
-    skippedCount: value.summary?.skipped || 0,
-    protocolCounts: value.summary?.protocols || {},
-    errors: value.issues || [],
-    // Deliberately project only display-safe fields. The parser's internal
-    // `proxy` object may contain UUIDs/passwords and must never reach the UI.
-    nodes: value.nodes?.map((node) => ({
-      id: node.id,
-      name: node.originalName || node.id,
-      type: node.type,
-    })),
-  }
 }
 
 export function useGatewayApi() {
@@ -111,157 +59,198 @@ export function useGatewayApi() {
     timeout: REQUEST_TIMEOUT,
     retry: 0,
   })
+  const gatewayPath = 'control/gateway'
+  const encodeId = (id: string) => encodeURIComponent(id)
 
   return {
-    login: (password: string) =>
-      parseJson<GatewayAuthSession>(
-        client.post('auth/login', { json: { password } }),
-      ),
-    logout: async () => {
-      await client.post('auth/logout', mutationOptions())
+    async login(password: string) {
       responseCsrfToken = ''
+      return parseJson<GatewayAuthSession>(
+        client.post('auth/login', { json: { password } }),
+      )
+    },
+    async logout() {
+      try {
+        await client.post('auth/logout', mutationOptions())
+      } finally {
+        responseCsrfToken = ''
+      }
     },
     getSession: () => parseJson<GatewayAuthSession>(client.get('auth/me')),
-    changePassword: (currentPassword: string, newPassword: string) =>
-      parseJson<{ ok: true }>(
+    async changePassword(currentPassword: string, newPassword: string) {
+      const result = await parseJson<{ ok: true }>(
         client.put(
           'auth/password',
           mutationOptions({ currentPassword, newPassword }),
         ),
-      ),
+      )
+      responseCsrfToken = ''
+      return result
+    },
 
-    getGateway: () => parseJson<GatewayConfig>(client.get('control/gateway')),
-    updateGateway: (body: Pick<GatewayConfig, 'enabled' | 'port' | 'udp'>) =>
-      parseJson<GatewayConfig>(
-        client.put('control/gateway', mutationOptions(body)),
+    listPorts: () =>
+      parseJson<GatewayCollection<GatewayPort>>(
+        client.get(`${gatewayPath}/ports`),
       ),
-    getGatewayStatus: () =>
-      parseJson<GatewayStatus>(client.get('control/gateway/status')),
-    updateOutbound: (body: { mode: GatewayOutboundMode; nodeId?: string }) =>
-      parseJson<GatewayConfig>(
-        client.put('control/gateway/outbound', mutationOptions(body)),
-      ),
-
-    listCredentials: () =>
-      parseJson<GatewayListResponse<GatewayCredential>>(
-        client.get('control/gateway/credentials'),
-      ),
-    createCredential: (body: {
-      username: string
-      password?: string
-      enabled?: boolean
-    }) =>
-      parseJson<GatewayCredentialSecret>(
-        client.post('control/gateway/credentials', mutationOptions(body)),
-      ),
-    updateCredential: (
-      id: string,
-      body: { username?: string; enabled?: boolean },
+    updatePort: (
+      id: number,
+      body: Partial<Pick<GatewayPort, 'enabled' | 'credentialIds' | 'hops'>>,
     ) =>
-      parseJson<GatewayCredential>(
+      parseJson<GatewayPort>(
+        client.put(`${gatewayPath}/ports/${id}`, mutationOptions(body)),
+      ),
+
+    listNodes: () =>
+      parseJson<GatewayCollection<GatewayNode>>(
+        client.get(`${gatewayPath}/nodes`),
+      ),
+    updateNode: (id: string, body: { enabled: boolean }) =>
+      parseJson<GatewayNode>(
         client.put(
-          `control/gateway/credentials/${encodeURIComponent(id)}`,
+          `${gatewayPath}/nodes/${encodeId(id)}`,
           mutationOptions(body),
         ),
       ),
-    deleteCredential: async (id: string) => {
-      await client.delete(
-        `control/gateway/credentials/${encodeURIComponent(id)}`,
-        mutationOptions(),
-      )
-    },
-    rotateCredential: (id: string, password?: string) =>
-      parseJson<GatewayCredentialSecret>(
+    testNode: (id: string) =>
+      parseJson<GatewayNodeTestResult>(
         client.post(
-          `control/gateway/credentials/${encodeURIComponent(id)}/rotate`,
-          mutationOptions(password ? { password } : {}),
+          `${gatewayPath}/nodes/${encodeId(id)}/test`,
+          mutationOptions(),
         ),
       ),
+    getNodeImpact: (id: string) =>
+      parseJson<GatewayNodeImpact>(
+        client.get(`${gatewayPath}/nodes/${encodeId(id)}/impact`),
+      ),
+    deleteNode: async (id: string, confirmed: boolean) => {
+      await client.delete(
+        `${gatewayPath}/nodes/${encodeId(id)}`,
+        mutationOptions({ confirmed }),
+      )
+    },
 
-    previewImport: (body: { content: string; fileName?: string }) =>
-      parseJson<GatewayImportPreview | RawImportPreview>(
-        client.post('control/import/preview', {
+    previewImport: (body: { content: string }) =>
+      parseJson<GatewayImportPreview>(
+        client.post(`${gatewayPath}/imports/preview`, {
           ...mutationOptions(body),
           timeout: IMPORT_TIMEOUT,
         }),
-      ).then(normalizeImportPreview),
+      ),
     previewImportFile: (file: File) => {
       const form = new FormData()
       form.set('file', file)
       const token = getGatewayCsrfToken()
-      return parseJson<GatewayImportPreview | RawImportPreview>(
-        client.post('control/import/preview', {
+      return parseJson<GatewayImportPreview>(
+        client.post(`${gatewayPath}/imports/preview`, {
           body: form,
           headers: token ? { 'X-CSRF-Token': token } : undefined,
           timeout: IMPORT_TIMEOUT,
         }),
-      ).then(normalizeImportPreview)
+      )
     },
-    applyImport: (body: {
-      previewId?: string
-      content?: string
-      fileName?: string
-    }) =>
-      parseJson<{ imported: number; gateway?: GatewayConfig }>(
-        client.post('control/import/apply', {
+    applyImport: (body: GatewayImportApplyInput) =>
+      parseJson<{ imported: number }>(
+        client.post(`${gatewayPath}/imports/apply`, {
           ...mutationOptions(body),
           timeout: IMPORT_TIMEOUT,
         }),
       ),
 
     listSubscriptions: () =>
-      parseJson<GatewayListResponse<GatewaySubscription>>(
-        client.get('control/subscriptions'),
+      parseJson<GatewayCollection<GatewaySubscription>>(
+        client.get(`${gatewayPath}/subscriptions`),
       ),
     createSubscription: (body: {
       name: string
       url: string
-      intervalMinutes: number
-      enabled: boolean
+      intervalMinutes?: number
+      enabled?: boolean
     }) =>
       parseJson<GatewaySubscription>(
-        client.post('control/subscriptions', mutationOptions(body)),
+        client.post(`${gatewayPath}/subscriptions`, mutationOptions(body)),
       ),
     updateSubscription: (
       id: string,
       body: Partial<
-        Pick<GatewaySubscription, 'name' | 'intervalMinutes' | 'enabled'>
+        Pick<GatewaySubscription, 'name' | 'intervalMinutes' | 'enabled'> & {
+          url: string
+        }
       >,
     ) =>
       parseJson<GatewaySubscription>(
         client.put(
-          `control/subscriptions/${encodeURIComponent(id)}`,
+          `${gatewayPath}/subscriptions/${encodeId(id)}`,
           mutationOptions(body),
         ),
       ),
     deleteSubscription: async (id: string) => {
       await client.delete(
-        `control/subscriptions/${encodeURIComponent(id)}`,
+        `${gatewayPath}/subscriptions/${encodeId(id)}`,
         mutationOptions(),
       )
     },
     syncSubscription: (id: string) =>
       parseJson<GatewaySubscription>(
         client.post(
-          `control/subscriptions/${encodeURIComponent(id)}/sync`,
+          `${gatewayPath}/subscriptions/${encodeId(id)}/sync`,
           mutationOptions(),
+        ),
+      ),
+    refreshSubscriptions: () =>
+      parseJson<GatewaySubscriptionRefreshResult>(
+        client.post(`${gatewayPath}/subscriptions/refresh`, mutationOptions()),
+      ),
+
+    listCredentials: () =>
+      parseJson<GatewayCollection<GatewayCredential>>(
+        client.get(`${gatewayPath}/credentials`),
+      ),
+    createCredential: (body: {
+      username: string
+      password?: string
+      enabled?: boolean
+      portIds?: number[]
+    }) =>
+      parseJson<GatewayCreatedCredential>(
+        client.post(`${gatewayPath}/credentials`, mutationOptions(body)),
+      ),
+    updateCredential: (
+      id: string,
+      body: {
+        username?: string
+        enabled?: boolean
+        portIds?: number[]
+      },
+    ) =>
+      parseJson<GatewayCredential>(
+        client.put(
+          `${gatewayPath}/credentials/${encodeId(id)}`,
+          mutationOptions(body),
+        ),
+      ),
+    deleteCredential: async (id: string) => {
+      await client.delete(
+        `${gatewayPath}/credentials/${encodeId(id)}`,
+        mutationOptions(),
+      )
+    },
+    rotateCredential: (id: string, password?: string) =>
+      parseJson<GatewayRotatedCredential>(
+        client.post(
+          `${gatewayPath}/credentials/${encodeId(id)}/rotate`,
+          mutationOptions(password === undefined ? undefined : { password }),
         ),
       ),
 
+    getGatewayStatus: () =>
+      parseJson<GatewayStatus>(client.get(`${gatewayPath}/status`)),
+    reapplyGateway: () =>
+      parseJson<{ ok: true }>(
+        client.post(`${gatewayPath}/reapply`, mutationOptions()),
+      ),
     listRevisions: () =>
-      parseJson<GatewayListResponse<GatewayRevision>>(
-        client.get('control/revisions'),
-      ),
-    rollbackRevision: (id: string) =>
-      parseJson<GatewayConfig>(
-        client.post(
-          `control/revisions/${encodeURIComponent(id)}/rollback`,
-          mutationOptions(),
-        ),
-      ),
-    listAudit: () =>
-      parseJson<GatewayListResponse<GatewayAuditEntry>>(
-        client.get('control/audit'),
+      parseJson<GatewayCollection<GatewayRevision>>(
+        client.get(`${gatewayPath}/revisions`),
       ),
   }
 }
