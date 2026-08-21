@@ -97,6 +97,11 @@ export function validateGatewayStateV2(state: GatewayStateV2): void {
   )
     throw new Error('gateway state must contain exactly 10 port slots')
 
+  if (!Array.isArray(state.credentials))
+    throw new Error('gateway state has invalid credentials')
+  const credentialIds = state.credentials.map(({ id }) => id)
+  if (new Set(credentialIds).size !== credentialIds.length)
+    throw new Error('gateway state has duplicate credential IDs')
   const credentials = new Map(
     state.credentials.map((credential) => [credential.id, credential]),
   )

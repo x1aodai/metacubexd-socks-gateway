@@ -43,6 +43,7 @@ describe('managed SOCKS gateway', () => {
     const created = await manager.createCredential({
       username: 'alice',
       password: 'a-secure-socks-password',
+      portIds: [1],
     })
     expect(created.password).toBe('a-secure-socks-password')
     await manager.appendImportedNodes([

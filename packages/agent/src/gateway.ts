@@ -1,5 +1,7 @@
 import type {
+  GatewayHop,
   GatewayMode,
+  GatewayPort,
   GatewayStateV1,
   GatewayStateV2,
   StoredGatewayCredential,
@@ -54,6 +56,7 @@ export interface GatewayCredential {
   enabled: boolean
   createdAt: number
   updatedAt: number
+  portIds: number[]
 }
 
 type StoredCredential = StoredGatewayCredential
@@ -111,15 +114,25 @@ export interface GatewayManager {
     input: Partial<Pick<GatewayConfig, 'enabled' | 'port' | 'udp'>>,
   ) => Promise<GatewayConfig>
   status: () => Promise<GatewayStatus>
+  listPorts: () => Promise<GatewayPort[]>
+  updatePort: (
+    id: number,
+    input: {
+      enabled?: boolean
+      credentialIds?: string[]
+      hops?: GatewayHop[]
+    },
+  ) => Promise<GatewayPort>
   listCredentials: () => Promise<GatewayCredential[]>
   createCredential: (input: {
     username: string
     password?: string
     enabled?: boolean
+    portIds?: number[]
   }) => Promise<GatewayCredential & { password: string }>
   updateCredential: (
     id: string,
-    input: { username?: string; enabled?: boolean },
+    input: { username?: string; enabled?: boolean; portIds?: number[] },
   ) => Promise<GatewayCredential>
   deleteCredential: (id: string) => Promise<void>
   rotateCredential: (
@@ -837,14 +850,45 @@ export function createGatewayManager(
         lastError: state.lastError ?? kernel?.lastError,
       }
     },
+    async listPorts() {
+      return structuredClone((await loadV2State()).ports)
+    },
+    updatePort(id, input) {
+      return transaction(async () => {
+        validatePortId(id)
+        if ('id' in input || 'port' in input)
+          throw new GatewayValidationError(
+            'gateway port id and fixed port number are not editable',
+          )
+        if (input.enabled !== undefined && typeof input.enabled !== 'boolean')
+          throw new GatewayValidationError(
+            'gateway port enabled must be boolean',
+          )
+
+        const next = cloneState(await loadV2State())
+        const port = next.ports[id - 1]!
+        if (input.enabled !== undefined) port.enabled = input.enabled
+        if (input.credentialIds !== undefined)
+          port.credentialIds = structuredClone(input.credentialIds)
+        if (input.hops !== undefined) port.hops = structuredClone(input.hops)
+        if (input.enabled !== true)
+          disablePortWithoutEnabledCredential(next, port)
+        await apply(next, 'port.update')
+        return structuredClone(port)
+      })
+    },
     async listCredentials() {
-      return (await loadState()).credentials.map(publicCredential)
+      const state = await loadState()
+      return state.credentials.map((credential) =>
+        publicCredential(credential, state),
+      )
     },
     createCredential(input) {
       return transaction(async () => {
         validateUsername(input.username)
         const password = input.password ?? generatePassword()
         validateCredentialPassword(password)
+        const portIds = normalizePortIds(input.portIds ?? [])
         const next = cloneState(await loadV2State())
         if (next.credentials.some((item) => item.username === input.username))
           throw new GatewayValidationError(
@@ -860,13 +904,17 @@ export function createGatewayManager(
           updatedAt: now(),
         }
         next.credentials.push(credential)
-        if (credential.enabled) next.ports[0]!.credentialIds.push(credential.id)
+        setCredentialPortIds(next, credential.id, portIds)
         await apply(next, 'credential.create')
-        return { ...publicCredential(credential), password }
+        return { ...publicCredential(credential, next), password }
       })
     },
     updateCredential(id, input) {
       return transaction(async () => {
+        const portIds =
+          input.portIds === undefined
+            ? undefined
+            : normalizePortIds(input.portIds)
         const next = cloneState(await loadV2State())
         const credential = next.credentials.find((item) => item.id === id)
         if (!credential)
@@ -884,17 +932,14 @@ export function createGatewayManager(
             )
           credential.username = input.username
         }
-        if (input.enabled !== undefined) {
+        if (input.enabled !== undefined)
           credential.enabled = Boolean(input.enabled)
-          if (
-            credential.enabled &&
-            !next.ports[0]!.credentialIds.includes(credential.id)
-          )
-            next.ports[0]!.credentialIds.push(credential.id)
-        }
+        if (portIds !== undefined)
+          setCredentialPortIds(next, credential.id, portIds)
+        disablePortsWithoutEnabledCredentials(next)
         credential.updatedAt = now()
         await apply(next, 'credential.update')
-        return publicCredential(credential)
+        return publicCredential(credential, next)
       })
     },
     deleteCredential(id) {
@@ -908,6 +953,7 @@ export function createGatewayManager(
           port.credentialIds = port.credentialIds.filter(
             (credentialId) => credentialId !== id,
           )
+        disablePortsWithoutEnabledCredentials(next)
         await apply(next, 'credential.delete')
       })
     },
@@ -1092,13 +1138,74 @@ function deduplicateManagedProxies(
   return output
 }
 
-function publicCredential(value: StoredCredential): GatewayCredential {
+function validatePortId(id: number): void {
+  if (!Number.isInteger(id) || id < 1 || id > GATEWAY_PORTS.length)
+    throw new GatewayValidationError('gateway port id must be within 1-10')
+}
+
+function normalizePortIds(portIds: number[]): number[] {
+  if (!Array.isArray(portIds))
+    throw new GatewayValidationError('credential portIds must be an array')
+  const unique = new Set<number>()
+  for (const id of portIds) {
+    validatePortId(id)
+    unique.add(id)
+  }
+  return [...unique].sort((left, right) => left - right)
+}
+
+function setCredentialPortIds(
+  state: GatewayStateV2,
+  credentialId: string,
+  portIds: number[],
+): void {
+  const selected = new Set(portIds)
+  for (const port of state.ports) {
+    if (selected.has(port.id)) {
+      if (!port.credentialIds.includes(credentialId))
+        port.credentialIds.push(credentialId)
+    } else {
+      port.credentialIds = port.credentialIds.filter(
+        (id) => id !== credentialId,
+      )
+    }
+  }
+}
+
+function disablePortWithoutEnabledCredential(
+  state: GatewayStateV2,
+  port: GatewayPort,
+): void {
+  if (!port.enabled) return
+  const enabledCredentialIds = new Set(
+    state.credentials.filter(({ enabled }) => enabled).map(({ id }) => id),
+  )
+  if (!port.credentialIds.some((id) => enabledCredentialIds.has(id)))
+    port.enabled = false
+}
+
+function disablePortsWithoutEnabledCredentials(state: GatewayStateV2): void {
+  for (const port of state.ports)
+    disablePortWithoutEnabledCredential(state, port)
+}
+
+function publicCredential(
+  value: StoredCredential,
+  state: PersistedState,
+): GatewayCredential {
   return {
     id: value.id,
     username: value.username,
     enabled: value.enabled,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    portIds:
+      state.version === 2
+        ? state.ports
+            .filter(({ credentialIds }) => credentialIds.includes(value.id))
+            .map(({ id }) => id)
+            .sort((left, right) => left - right)
+        : [],
   }
 }
 
