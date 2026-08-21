@@ -75,11 +75,22 @@ describe('administrator auth routes', () => {
         body: JSON.stringify({ password: 'a-strong-admin-password' }),
       })
       const cookie = (login.headers.get('set-cookie') ?? '').split(';', 1)[0]!
-      const logout = await fetch(`${base}/api/auth/logout`, {
+      const { csrfToken } = (await login.json()) as { csrfToken: string }
+      const missing = await fetch(`${base}/api/auth/logout`, {
         method: 'POST',
         headers: { cookie },
       })
-      expect(logout.status).toBe(403)
+      expect(missing.status).toBe(403)
+      const wrong = await fetch(`${base}/api/auth/logout`, {
+        method: 'POST',
+        headers: { cookie, 'x-csrf-token': 'wrong-token' },
+      })
+      expect(wrong.status).toBe(403)
+      const valid = await fetch(`${base}/api/auth/logout`, {
+        method: 'POST',
+        headers: { cookie, 'x-csrf-token': csrfToken },
+      })
+      expect(valid.status).toBe(200)
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }

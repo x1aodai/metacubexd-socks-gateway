@@ -645,7 +645,13 @@ export function createGatewayManager(
     let validatingState = true
     try {
       const next = cloneState(candidateState)
-      validateGatewayStateV2(next)
+      try {
+        validateGatewayStateV2(next)
+      } catch (error) {
+        throw new GatewayValidationError(
+          error instanceof Error ? error.message : 'invalid gateway state',
+        )
+      }
       validatingState = false
       previousActive = await readActive()
       const candidate = generateGatewayConfig(

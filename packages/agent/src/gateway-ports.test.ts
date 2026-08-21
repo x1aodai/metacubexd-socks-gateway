@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { parse } from 'yaml'
-import { createGatewayManager } from './gateway'
+import { createGatewayManager, GatewayValidationError } from './gateway'
 import {
   createInitialGatewayStateV2,
   validateGatewayStateV2,
@@ -215,7 +215,7 @@ describe('fixed gateway ports and credential bindings', () => {
         enabled: true,
         credentialIds: [alice.id],
       }),
-    ).rejects.toThrow(/one or two hops/i)
+    ).rejects.toBeInstanceOf(GatewayValidationError)
     await expect(
       manager.updatePort(2, { enabled: true, hops: HOPS }),
     ).rejects.toThrow(/enabled credential/i)
