@@ -53,6 +53,8 @@ export interface GatewayNode {
   name: string
   type: string
   enabled: boolean
+  sourceIds: string[]
+  portIds: number[]
   healthy?: boolean
   latency?: number | null
 }
@@ -785,15 +787,24 @@ export function createGatewayManager(
     const state = await loadState()
     if (state.version === 1) {
       const nodes = new Map<string, GatewayNode>()
-      for (const proxy of Object.values(state.nodeSources).flat()) {
-        const id = stableNodeId(proxy)
-        if (!nodes.has(id))
-          nodes.set(id, {
-            id,
-            name: proxy.name,
-            type: proxy.type,
-            enabled: true,
-          })
+      for (const [sourceId, proxies] of orderedNodeSources(state.nodeSources)) {
+        for (const proxy of proxies) {
+          const id = stableNodeId(proxy)
+          const existing = nodes.get(id)
+          if (existing) {
+            if (!existing.sourceIds.includes(sourceId))
+              existing.sourceIds.push(sourceId)
+          } else {
+            nodes.set(id, {
+              id,
+              name: proxy.name,
+              type: proxy.type,
+              enabled: true,
+              sourceIds: [sourceId],
+              portIds: [],
+            })
+          }
+        }
       }
       return [...nodes.values()]
     }
@@ -1554,27 +1565,34 @@ function replaceNodeSourceInState(
 
 function listPersistedNodes(state: GatewayStateV2): GatewayNode[] {
   const nodes = new Map<string, GatewayNode>()
-  const sources = Object.entries(state.nodeSources).sort(
-    ([left], [right]) =>
-      Number(right === 'manual') - Number(left === 'manual') ||
-      left.localeCompare(right),
-  )
-  for (const [, source] of sources) {
+  for (const [sourceId, source] of orderedNodeSources(state.nodeSources)) {
     for (const node of source.nodes) {
       const existing = nodes.get(node.id)
       if (existing) {
         existing.enabled ||= node.enabled
+        if (!existing.sourceIds.includes(sourceId))
+          existing.sourceIds.push(sourceId)
       } else {
         nodes.set(node.id, {
           id: node.id,
           name: node.proxy.name,
           type: node.proxy.type,
           enabled: node.enabled,
+          sourceIds: [sourceId],
+          portIds: calculateNodeImpact(state, node.id).affectedPortIds,
         })
       }
     }
   }
   return [...nodes.values()]
+}
+
+function orderedNodeSources<T>(sources: Record<string, T>): [string, T][] {
+  return Object.entries(sources).sort(
+    ([left], [right]) =>
+      Number(right === 'manual') - Number(left === 'manual') ||
+      left.localeCompare(right),
+  )
 }
 
 function gatewayNode(

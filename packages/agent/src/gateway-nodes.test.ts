@@ -1,5 +1,5 @@
 import type { GatewayManager } from './gateway'
-import type { GatewayHop } from './gateway-state'
+import type { GatewayHop, GatewayStateV1 } from './gateway-state'
 import type { NormalizedNode } from './subscription'
 import type { KernelState, MihomoSupervisor } from './types'
 import { mkdtemp } from 'node:fs/promises'
@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { parse } from 'yaml'
 import { createGatewayManager } from './gateway'
+import { atomicWrite, encryptJson, loadOrCreateKey } from './secure-store'
 import { stableNodeId } from './subscription'
 
 function normalizedNode(
@@ -153,6 +154,8 @@ describe('stable gateway node library', () => {
         name: 'renamed-node',
         type: 'socks5',
         enabled: true,
+        sourceIds: ['manual'],
+        portIds: [1],
       },
     ])
     expect(nodes[0]).not.toHaveProperty('proxy')
@@ -165,6 +168,79 @@ describe('stable gateway node library', () => {
       ),
     ).resolves.toBeDefined()
     expect(await manager.listNodes()).toHaveLength(1)
+  })
+
+  it('aggregates stable source IDs and sorted port references for each V2 node', async () => {
+    const node = normalizedNode('shared-source-node', 1096)
+    const { manager } = await setup()
+    await manager.replaceNodeSource(
+      'subscription:zeta',
+      [renamed(node, 'zeta-name')],
+      'subscription.sync',
+    )
+    await manager.replaceNodeSource(
+      'subscription:alpha',
+      [renamed(node, 'alpha-name')],
+      'subscription.sync',
+    )
+    await manager.appendImportedNodes([renamed(node, 'manual-name')])
+    await enablePorts(manager, [10, 2], {
+      10: [{ mode: 'manual', nodeIds: [node.id] }],
+      2: [{ mode: 'manual', nodeIds: [node.id] }],
+    })
+
+    expect(await manager.listNodes()).toEqual([
+      {
+        id: node.id,
+        name: 'manual-name',
+        type: 'socks5',
+        enabled: true,
+        sourceIds: ['manual', 'subscription:alpha', 'subscription:zeta'],
+        portIds: [2, 10],
+      },
+    ])
+  })
+
+  it('lists V1 nodes with stable source IDs and no synthetic port references', async () => {
+    const node = normalizedNode('legacy-manual-name', 1097)
+    const dataDir = await mkdtemp(join(tmpdir(), 'mcxd-gateway-nodes-v1-'))
+    const state: GatewayStateV1 = {
+      version: 1,
+      gateway: {
+        enabled: false,
+        port: 1080,
+        udp: false,
+        mode: 'manual',
+        updatedAt: 1,
+      },
+      credentials: [],
+      nodeSources: {
+        'subscription:zeta': [renamed(node, 'legacy-zeta-name').proxy],
+        manual: [node.proxy],
+        'subscription:alpha': [renamed(node, 'legacy-alpha-name').proxy],
+      },
+      revisions: [],
+    }
+    const masterKey = 'task-6-test-key'
+    const key = await loadOrCreateKey(dataDir, masterKey)
+    await atomicWrite(join(dataDir, 'gateway.enc'), encryptJson(state, key))
+    const manager = createGatewayManager({
+      dataDir,
+      activeConfigPath: join(dataDir, 'active.yaml'),
+      masterKey,
+      controllerUrl: '127.0.0.1:9090',
+    })
+
+    expect(await manager.listNodes()).toEqual([
+      {
+        id: node.id,
+        name: 'legacy-manual-name',
+        type: 'socks5',
+        enabled: true,
+        sourceIds: ['manual', 'subscription:alpha', 'subscription:zeta'],
+        portIds: [],
+      },
+    ])
   })
 
   it('toggles every source copy, filters disabled candidates, and only auto-disables ports that lose all enabled candidates', async () => {

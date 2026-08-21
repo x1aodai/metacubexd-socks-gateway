@@ -19,6 +19,8 @@ export interface GatewayNode {
   name: string
   type: string
   enabled: boolean
+  sourceIds: string[]
+  portIds: number[]
   healthy?: boolean
   latency?: number | null
 }

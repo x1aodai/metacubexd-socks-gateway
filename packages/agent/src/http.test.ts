@@ -153,13 +153,22 @@ function makeGatewayDeps() {
       ...input,
     })),
     listNodes: vi.fn(async () => [
-      { id: 'node-1', name: 'safe-node', type: 'socks5', enabled: true },
+      {
+        id: 'node-1',
+        name: 'safe-node',
+        type: 'socks5',
+        enabled: true,
+        sourceIds: ['manual'],
+        portIds: [1],
+      },
     ]),
     updateNode: vi.fn(async (id: string, input: { enabled: boolean }) => ({
       id,
       name: 'safe-node',
       type: 'socks5',
       enabled: input.enabled,
+      sourceIds: ['manual'],
+      portIds: [1],
     })),
     testNode: vi.fn(async () => ({ reachable: true, latencyMs: 8 })),
     nodeImpact: vi.fn(async () => ({ affectedPortIds: [1] })),
@@ -449,7 +458,14 @@ describe('createControlRouter — gateway API contract', () => {
 
     expect(await (await request('/api/control/gateway/nodes')).json()).toEqual({
       items: [
-        { id: 'node-1', name: 'safe-node', type: 'socks5', enabled: true },
+        {
+          id: 'node-1',
+          name: 'safe-node',
+          type: 'socks5',
+          enabled: true,
+          sourceIds: ['manual'],
+          portIds: [1],
+        },
       ],
     })
     await request('/api/control/gateway/nodes/node-1', 'PUT', {
@@ -770,6 +786,8 @@ describe('createControlRouter — gateway API contract', () => {
         name: 'safe-node',
         type: 'socks5',
         enabled: true,
+        sourceIds: ['manual', 'subscription:safe'],
+        portIds: [1, 10],
         password: 'node-password-canary',
         rawProxy: { server: '203.0.113.8' },
         config: 'mixed-port: 7890',
@@ -951,7 +969,14 @@ describe('createControlRouter — gateway API contract', () => {
     })
     expect(await (await request('/api/control/gateway/nodes')).json()).toEqual({
       items: [
-        { id: 'node-1', name: 'safe-node', type: 'socks5', enabled: true },
+        {
+          id: 'node-1',
+          name: 'safe-node',
+          type: 'socks5',
+          enabled: true,
+          sourceIds: ['manual', 'subscription:safe'],
+          portIds: [1, 10],
+        },
       ],
     })
     expect(

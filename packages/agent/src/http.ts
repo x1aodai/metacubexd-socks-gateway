@@ -260,6 +260,8 @@ function publicGatewayNode(node: GatewayNode): GatewayNode {
     name: node.name,
     type: node.type,
     enabled: node.enabled,
+    sourceIds: [...node.sourceIds],
+    portIds: [...node.portIds],
     ...(node.healthy === undefined ? {} : { healthy: node.healthy }),
     ...(node.latency === undefined ? {} : { latency: node.latency }),
   }
