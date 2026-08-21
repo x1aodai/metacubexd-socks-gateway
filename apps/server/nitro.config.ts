@@ -15,11 +15,4 @@ export default defineNitroConfig({
   publicAssets: [{ baseURL: '/', dir: uiDist, maxAge: 60 * 60 * 24 * 365 }],
   // Exclude test files from Nitro's middleware/routes scanner.
   ignore: ['**/__tests__/**', '**/*.spec.ts', '**/*.test.ts'],
-  // NOTE: Intentionally NO Clash-API proxy here. Nitro routeRules `proxy`
-  // cannot upgrade WebSocket connections (nitrojs/nitro#2886), and the
-  // dashboard talks to mihomo's Clash API over native WebSocket (traffic,
-  // connections, logs). Proxying would yield a half-broken endpoint (HTTP ok,
-  // WS dead). Instead the agent injects the configured external-controller
-  // bind address into the active config and the reverse proxy reaches port 9090
-  // directly. Do NOT add a /clash-api proxy route.
 })

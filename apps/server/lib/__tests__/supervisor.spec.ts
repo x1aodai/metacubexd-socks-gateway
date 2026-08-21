@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // without spawning a real kernel.
 const createAgentMock = vi.fn((_opts: Record<string, unknown>) => ({
   supervisor: { getState: () => ({ status: 'stopped' }) },
-  profiles: {},
   router: { __isRouter: true },
-  info: () => ({ hasAgent: true }),
+  gateway: {},
+  gatewaySubscriptions: {},
 }))
 vi.mock('@metacubexd/agent', () => ({
   createAgent: createAgentMock,
@@ -42,12 +42,16 @@ describe('apps/server lib/supervisor', () => {
     delete process.env.PUBLIC_DIRECT_ACCESS
     const { serverEnv } = await import('../supervisor')
     const env = serverEnv()
-    expect(env.controlPort).toBe(8080)
-    expect(env.clashApiPort).toBe(9090)
+    expect(Object.keys(env).sort()).toEqual([
+      'adminPassword',
+      'clashSecret',
+      'dataDir',
+      'gatewayMasterKey',
+      'mihomoBin',
+      'sessionCookieSecure',
+    ])
     expect(env.dataDir).toBe('/data')
     expect(env.mihomoBin).toBe('/usr/local/bin/mihomo')
-    expect(env.githubToken).toBe('')
-    expect(env.publicDirectAccess).toBe(false)
     expect(env).not.toHaveProperty('clashApiBindAddress')
     expect(env).not.toHaveProperty('clashApiCorsOrigins')
     expect(env).not.toHaveProperty('mixedPort')
@@ -55,7 +59,7 @@ describe('apps/server lib/supervisor', () => {
     expect(env).not.toHaveProperty('socksPortMax')
   })
 
-  it('ignores removed gateway env while retaining unrelated runtime env', async () => {
+  it('ignores removed generic dashboard and listener environment', async () => {
     process.env.CONTROL_PORT = '18080'
     process.env.CLASH_API_PORT = '19090'
     process.env.CLASH_API_BIND_ADDRESS = '0.0.0.0'
@@ -68,15 +72,16 @@ describe('apps/server lib/supervisor', () => {
     process.env.PUBLIC_DIRECT_ACCESS = 'true'
     const { serverEnv } = await import('../supervisor')
     const env = serverEnv()
-    expect(env.controlPort).toBe(18080)
-    expect(env.clashApiPort).toBe(19090)
     expect(env.dataDir).toBe('/srv/data')
     expect(env.mihomoBin).toBe('/opt/mihomo')
-    expect(env.githubToken).toBe('github-token')
-    expect(env.publicDirectAccess).toBe(true)
+    expect(env).not.toHaveProperty('controlPort')
+    expect(env).not.toHaveProperty('clashApiPort')
     expect(env).not.toHaveProperty('clashApiBindAddress')
     expect(env).not.toHaveProperty('clashApiCorsOrigins')
     expect(env).not.toHaveProperty('mixedPort')
+    expect(env).not.toHaveProperty('githubToken')
+    expect(env).not.toHaveProperty('publicDirectAccess')
+    expect(env).not.toHaveProperty('defaultBackendURL')
   })
 
   it('builds the agent once with fixed Controller and minimal gateway options', async () => {
@@ -98,10 +103,10 @@ describe('apps/server lib/supervisor', () => {
     const opts = createAgentMock.mock.calls[0]![0]
     expect(opts.binaryPath).toBe('/usr/local/bin/mihomo')
     expect(opts.homeDir).toBe('/data')
-    expect(opts.profilesDir).toBe('/data/profiles')
+    expect(opts.profilesDir).toBeUndefined()
     expect(opts.activeConfigPath).toBe('/data/active.yaml')
     expect(opts.agentToken).toBeUndefined()
-    expect(opts.externalController).toBe('127.0.0.1:9090')
+    expect(opts.externalController).toBeUndefined()
     expect(opts.secret).toBe('clash-x')
     expect(opts.mixedPort).toBeUndefined()
     expect(opts.gateway).toEqual({

@@ -3,18 +3,10 @@ import bootKernel from '../boot-kernel'
 
 const fakes = vi.hoisted(() => ({
   supervisor: {
-    start: vi.fn(),
-    stop: vi.fn(),
-    restart: vi.fn(),
     dispose: vi.fn(),
-  },
-  scheduler: {
-    start: vi.fn(),
-    stop: vi.fn(),
   },
   gateway: {
     bootstrap: vi.fn(),
-    status: vi.fn(),
   },
   gatewaySubscriptions: {
     start: vi.fn(),
@@ -64,9 +56,6 @@ describe('boot-kernel gateway lifecycle', () => {
     vi.clearAllMocks()
     fakes.supervisor.dispose.mockResolvedValue(undefined)
     fakes.gateway.bootstrap.mockResolvedValue(undefined)
-    vi.spyOn(globalThis, 'setInterval').mockReturnValue({
-      unref: vi.fn(),
-    } as never)
   })
 
   it('awaits bootstrap before starting only the gateway subscription scheduler', async () => {
@@ -79,12 +68,6 @@ describe('boot-kernel gateway lifecycle', () => {
 
     expect(fakes.gateway.bootstrap).toHaveBeenCalledOnce()
     expect(fakes.gatewaySubscriptions.start).not.toHaveBeenCalled()
-    expect(fakes.scheduler.start).not.toHaveBeenCalled()
-    expect(fakes.supervisor.start).not.toHaveBeenCalled()
-    expect(fakes.supervisor.stop).not.toHaveBeenCalled()
-    expect(fakes.supervisor.restart).not.toHaveBeenCalled()
-    expect(fakes.gateway.status).not.toHaveBeenCalled()
-    expect(setInterval).not.toHaveBeenCalled()
 
     gate.resolve()
     await booting
@@ -100,12 +83,6 @@ describe('boot-kernel gateway lifecycle', () => {
     await expect(runBoot(app)).rejects.toBe(failure)
 
     expect(fakes.gatewaySubscriptions.start).not.toHaveBeenCalled()
-    expect(fakes.scheduler.start).not.toHaveBeenCalled()
-    expect(fakes.supervisor.start).not.toHaveBeenCalled()
-    expect(fakes.supervisor.stop).not.toHaveBeenCalled()
-    expect(fakes.supervisor.restart).not.toHaveBeenCalled()
-    expect(fakes.gateway.status).not.toHaveBeenCalled()
-    expect(setInterval).not.toHaveBeenCalled()
   })
 
   it('stops gateway subscriptions before awaiting supervisor disposal on close', async () => {
@@ -129,8 +106,6 @@ describe('boot-kernel gateway lifecycle', () => {
 
     expect(events).toEqual(['gatewaySubscriptions.stop', 'supervisor.dispose'])
     expect(settled).toBe(false)
-    expect(fakes.scheduler.stop).not.toHaveBeenCalled()
-    expect(fakes.supervisor.stop).not.toHaveBeenCalled()
 
     disposeGate.resolve()
     await closing

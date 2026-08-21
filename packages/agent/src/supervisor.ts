@@ -180,7 +180,7 @@ export function createSupervisor(
 
   // Before spawn, force mihomo to bind the Clash API where the supervisor polls.
   // We rewrite the active YAML in place: strip any top-level external-controller/
-  // secret/mixed-port lines the profile carried, then prepend our managed values
+  // secret/mixed-port lines it carried, then prepend our managed values
   // so state.externalController/secret (and the optional mixedPort) are authoritative.
   // A managed mixed port must also be the sole listener on that number: mihomo
   // otherwise keeps the earlier port/socks-port listener and silently reports

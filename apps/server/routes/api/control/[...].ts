@@ -26,11 +26,6 @@ const forward = fromNodeMiddleware((req, res, _next) => {
 export default defineEventHandler(async (event) => {
   const path = event.path.split('?')[0] ?? event.path
   if (path === '/api/control/gateway/status' && event.method === 'GET') {
-    if (!agent.gateway)
-      throw createError({
-        statusCode: 503,
-        statusMessage: 'Gateway unavailable',
-      })
     const status = await agent.gateway.status().catch(() => {
       throw createError({
         statusCode: 500,
