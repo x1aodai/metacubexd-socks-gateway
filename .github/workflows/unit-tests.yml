@@ -4,15 +4,9 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
 
 permissions:
   contents: read
@@ -33,7 +27,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           cache: pnpm
-          node-version: lts/*
+          node-version-file: .node-version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -49,3 +43,9 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Verify runtime contract
+        run: node deploy/verify-contract.mjs
+
+      - name: Verify distribution contract
+        run: node deploy/verify-distribution.mjs

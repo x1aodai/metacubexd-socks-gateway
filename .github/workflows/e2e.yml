@@ -33,16 +33,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           cache: pnpm
-          node-version: latest
+          node-version-file: .node-version
 
-      - name: install dependencies
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: install playwright browsers
+      - name: Install Chromium
         run: pnpm --filter @metacubexd/ui exec playwright install --with-deps chromium
 
-      - name: build
+      - name: Build UI
         run: pnpm --filter @metacubexd/ui build
 
-      - name: run e2e tests
+      - name: Run gateway E2E
         run: pnpm --filter @metacubexd/ui test:e2e

@@ -1,40 +1,53 @@
 # Security Policy
 
-## Supported versions
+## Supported code
 
-Security fixes are developed on `main` and shipped in the newest release. The
-current release and `main` receive security fixes; older releases are not
-guaranteed to receive backports. Upgrade to the latest release before reporting
-an issue that may already be fixed.
+Security fixes, when provided, target the current development branch. If gateway
+images are published, only the newest identified digest may receive a fix.
+There is no commitment to backport fixes to older commits or images. Use an
+immutable image digest so the deployed artifact is identifiable.
 
-| Version        | Security fixes |
-| -------------- | -------------- |
-| `main`         | Yes            |
-| Latest release | Yes            |
-| Older releases | Not guaranteed |
+## Private reporting status
 
-## Report a vulnerability privately
+As of **2026-08-21**, this fork has not verified that a private vulnerability
+reporting channel is enabled or monitored. Do not assume that GitHub private
+vulnerability reporting, an email address or the shared MetaCubeXD upstream
+channel will reach this fork's maintainer.
 
-Do not disclose a suspected vulnerability in a public GitHub issue,
-discussion, pull request, commit, or other public channel.
+Before sending vulnerability details, check the current repository owner and
+repository Security page for a private contact method and verify that it belongs
+to this fork. If no verified private method is available, open a minimal public
+issue asking the maintainer to establish private contact. Do not include the
+vulnerability, reproduction steps, affected endpoint or secrets in that issue.
 
-Use [GitHub private vulnerability reporting](https://github.com/MetaCubeX/metacubexd/security/advisories/new).
-Include enough information for maintainers to reproduce and assess the issue:
+No response or remediation time is guaranteed until a monitored channel is
+published.
 
-- The affected version, release tag, or commit.
-- Deployment type, operating system, and architecture.
-- Reproduction steps, impact, and required privileges or network access.
-- Relevant logs or screenshots with secrets and personal data removed.
-- A suggested mitigation or fix, if available.
+## What to include privately
 
-Never submit a real `CONTROL_TOKEN`, `CLASH_SECRET`, subscription URL, profile,
-private key, or other credential. Replace sensitive values with clearly marked
-placeholders.
+- affected release digest, tag or commit;
+- deployment environment and architecture;
+- minimal reproduction steps and required network position;
+- impact and whether authentication is required;
+- redacted logs or evidence;
+- a proposed mitigation, if known.
 
-Maintainers will triage the report privately, may request more information, and
-will coordinate any fix, advisory, and release before public disclosure. Please
-allow time for investigation and coordinate disclosure timing with the
-maintainers.
+Never send a real administrator password, session cookie, CSRF token, gateway
+master key, Controller secret, SOCKS password, subscription URL, node share link
+or encrypted state file. Replace each with an unmistakable placeholder.
 
-Non-security bugs can be reported through the public
-[issue tracker](https://github.com/MetaCubeX/metacubexd/issues).
+## Security boundaries
+
+- Web and Gateway API listen only on `127.0.0.1:8080`.
+- Mihomo Controller listens only on `127.0.0.1:9090` and must never be exposed
+  or reverse-proxied.
+- Remote Web access uses a same-host HTTPS reverse proxy or an SSH tunnel.
+- Only enabled ports within `10001`–`10010/tcp` are public SOCKS listeners.
+- SOCKS username/password authentication does not encrypt transport. Restrict
+  client source addresses where possible.
+- UDP, IPv6 SOCKS and `DIRECT` fallback are disabled.
+- Subscription and node inputs are untrusted configuration data and may contain
+  credentials.
+
+General defects that contain no security-sensitive detail may use the public
+issue tracker for this fork.

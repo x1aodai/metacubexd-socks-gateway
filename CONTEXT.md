@@ -1,159 +1,101 @@
-# metacubexd — Mihomo proxy dashboard
+# MetaCubeXD SOCKS Gateway context
 
-The control surface for observing and operating Mihomo across hosted, desktop,
-and server forms. This glossary fixes the project's ubiquitous language so UI,
-agent, and host modules describe the same concepts without conflating their
-control surfaces.
+This document fixes the product vocabulary and boundaries used by the Web,
+Server and Agent packages.
 
-## Language
+## Product boundary
 
-### Runtime forms
+**SOCKS Gateway** is the complete product: one all-in-one service that serves a
+Chinese management console, supervises Mihomo and exposes up to ten managed
+TCP SOCKS5 listeners. It is not a general-purpose Mihomo control surface.
 
-**Runtime Form**:
-A supported arrangement of dashboard, Control Agent, and Mihomo ownership.
-_Avoid_: deployment mode, app mode, mode (bare)
+The repository has three runtime workspaces:
 
-**Hosted Panel**:
-The browser-delivered dashboard connected to a user-managed Mihomo, without a
-Control Agent or Bundled Kernel.
-_Avoid_: web mode, remote mode, server mode
+- **Web** (`packages/ui`): the four-page browser console.
+- **Server** (`apps/server`): administrator authentication, static Web delivery
+  and same-origin Gateway API integration.
+- **Agent** (`packages/agent`): persisted gateway state, subscription parsing,
+  Mihomo configuration generation, process supervision and transactional apply.
 
-**Desktop App**:
-The packaged desktop form in which the dashboard and Control Agent manage a
-Bundled Kernel on the user's machine.
-_Avoid_: desktop mode, Electron frontend, local panel
+**Mihomo** is the managed proxy process. Its Controller is an implementation
+detail fixed to `127.0.0.1:9090`; operators and browsers do not connect to it.
 
-**All-in-One Server**:
-The server form in which one deployment serves the dashboard, runs the Control
-Agent, and manages a Bundled Kernel.
-_Avoid_: hosted panel, panel container, server mode
+## Network vocabulary
 
-### Control surfaces
+**Management endpoint**: the Web and API listener fixed to
+`127.0.0.1:8080`. Remote access terminates at a same-host HTTPS reverse proxy or
+an SSH tunnel.
 
-**Clash API**:
-Mihomo's external control surface for live proxy state, routing, connections,
-configuration, and telemetry over HTTP and WebSocket.
-_Avoid_: Control API, agent API, backend API
+**Controller**: Mihomo's loopback-only control listener at
+`127.0.0.1:9090`. Never call it a public API or document it as an operator
+endpoint.
 
-**Control API**:
-metacubexd's control surface for host-owned capabilities such as kernel
-lifecycle, profiles, subprocess logs, System Proxy, and TUN.
-_Avoid_: Clash API, Mihomo API, backend API
+**Port Slot**: one of ten immutable entries with IDs `1`–`10`, mapped in order
+to TCP ports `10001`–`10010`. A disabled Port Slot has no listener.
 
-**Control Agent**:
-The metacubexd companion that owns the Control API and coordinates managed
-profiles, host capabilities, and a Bundled Kernel.
-_Avoid_: backend, Mihomo, server, daemon
+**SOCKS Listener**: the authenticated TCP SOCKS5 listener generated for an
+enabled Port Slot. UDP and IPv6 SOCKS are not supported.
 
-**Kernel**:
-A running Mihomo process that performs proxying and routing.
-_Avoid_: backend, agent, server, core (bare)
+## Managed resources
 
-**Bundled Kernel**:
-The Mihomo executable distributed with and managed by the Desktop App or
-All-in-One Server.
-_Avoid_: embedded backend, built-in agent, remote kernel
+**Credential**: a SOCKS username and password. Credentials and Port Slots have
+a many-to-many relationship. Public API responses never return the stored
+password; creation and rotation responses return it once.
 
-### Proxy routing
+**Node**: a stable outbound identity derived from connection fields rather than
+its display name. A Node may be used in either hop and by any number of Port
+Slots.
 
-**Proxy Node**:
-A single outbound endpoint the Kernel can route traffic through: the leaf of a
-routing decision.
-_Avoid_: server, outbound, proxy (bare)
+**Node Source**: either a manual import or a managed Subscription. The same
+stable Node can appear in more than one source.
 
-**Proxy Group**:
-A named routing policy whose candidates may be Proxy Nodes or other Proxy
-Groups. Selection-bearing groups expose a selected member; automatic groups may
-route without one stable user selection.
-_Avoid_: selector (for every group), policy group
+**Subscription**: a refreshable remote Node Source. Its URL is sensitive.
+Explicit node exclusions persist across refreshes, and a failed or empty
+refresh retains the last known good source.
 
-**Selected Node**:
-The currently reported member of a selection-bearing Proxy Group, resolved
-recursively when that member is another group; not every Proxy Group has one.
-_Avoid_: now, current node, active node
+**Node Pool**: the operator-visible collection of Nodes from every source.
+There is no configured business maximum.
 
-**Proxy Provider**:
-An externally maintained set of Proxy Nodes that can be refreshed as one unit.
-_Avoid_: subscription (when meaning the node set), source
+## Route vocabulary
 
-### Latency
+**Hop**: one routing stage in a Port Slot. A route contains one or two Hops.
+Hop count changes only through an explicit operator edit.
 
-**Latency**:
-The measured round-trip delay of a Proxy Node for a given Test URL. No successful
-measurement means "not connected," not zero latency.
-_Avoid_: delay, ping, speed
+**Manual**: exactly one configured Node. Runtime failure does not silently
+select another Node.
 
-**Test URL**:
-The target of a latency probe; latency always belongs to a Proxy Node and Test
-URL pair.
-_Avoid_: test endpoint, probe URL
+**Auto**: Mihomo measures the configured candidates and selects the current
+best candidate.
 
-**Latency Band**:
-The shared quality bucket assigned to a latency reading: good, medium, slow, or
-not connected.
-_Avoid_: latency color, latency class, quality level
+**Failover**: Mihomo uses the first available candidate in configured order.
 
-**Latency Trend**:
-A Proxy Node's rolling latency history summarized by minimum, average, jitter,
-and success rate.
-_Avoid_: latency history chart, latency stats
+**One-hop route**: a Port Slot whose SOCKS traffic exits through one Hop.
 
-### Profiles and configuration
+**Two-hop route**: a Port Slot whose second-hop connection is dialed through
+the first Hop. The same stable Node cannot occupy consecutive Hops.
 
-**Profile**:
-A named source used to produce the Active Config. A Profile is local, remote,
-merge, or script according to how it contributes.
-_Avoid_: config file, subscription (for every profile), preset
+**Fail closed**: when a route has no usable candidate, traffic is rejected.
+`DIRECT` is never a generated fallback.
 
-**Local Profile**:
-An editable base Profile whose YAML is stored and maintained locally.
-_Avoid_: manual config, local config
+## State and operations
 
-**Remote Profile**:
-A base Profile whose YAML comes from a refreshable subscription URL.
-_Avoid_: Proxy Provider, subscription (bare), online config
+**Candidate State**: an in-memory copy produced for a requested mutation. It
+must validate before Mihomo is restarted.
 
-**Merge Profile**:
-An optional YAML overlay composed onto the active base Profile; it is not itself
-an activatable base.
-_Avoid_: patch profile, mixin, override file
+**Active State**: the encrypted, committed gateway state currently expected to
+match the running Mihomo configuration.
 
-**Script Profile**:
-An optional transformation applied after merge overlays; it is not itself an
-activatable base.
-_Avoid_: hook, plugin, script config
+**Apply**: validate Candidate State, generate configuration, restart Mihomo,
+verify the Controller and every enabled listener, then persist. Any failure
+restores the prior Active State and runtime.
 
-**Active Profile**:
-The local or remote base Profile currently chosen as the root of composition.
-_Avoid_: Active Config, running config, selected config
+**Revision**: an encrypted record of a successful committed state transition.
+Failed candidates do not remain in revision history.
 
-**Active Config**:
-The materialized configuration produced from the Active Profile and enabled
-merge and script contributions, ready for Kernel validation and use.
-_Avoid_: Active Profile, source profile, editor content
+**Gateway Status**: read-only projection of service versions, listener health,
+Port Slot health, active hop choices and the most recent apply result.
 
-**General Config**:
-The Kernel's top-level scalar settings, distinct from DNS, TUN, profile, and
-proxy-routing configuration.
-_Avoid_: core config, basic settings, localConfig
+## Web navigation
 
-**Running Mode**:
-The Kernel's top-level routing strategy: rule, global, or direct.
-_Avoid_: mode (bare), policy mode, Runtime Form
-
-### Host networking
-
-**Mixed Proxy Port**:
-The Kernel listener that accepts both HTTP and SOCKS proxy traffic from
-proxy-aware clients.
-_Avoid_: system proxy, TUN port, Clash API port
-
-**System Proxy**:
-The operating-system proxy setting that points proxy-aware applications at the
-Mixed Proxy Port.
-_Avoid_: TUN, VPN, global routing
-
-**TUN**:
-System-level routing through a virtual network interface managed by the Kernel,
-including traffic from applications that do not honor System Proxy settings.
-_Avoid_: System Proxy, mixed proxy, VPN (unless describing the user experience)
+The only product pages are **Ports**, **Nodes**, **Credentials** and **System**,
+shown in Chinese as `端口`、`节点`、`账号`、`系统`. Login redirects to Ports.

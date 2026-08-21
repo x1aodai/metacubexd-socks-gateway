@@ -1,146 +1,130 @@
-# Contributing to metacubexd
+# Contributing to MetaCubeXD SOCKS Gateway
 
-Thanks for helping improve metacubexd. Keep changes focused, explain the user
-impact, and include the checks you ran.
+Keep changes focused on the fixed-port gateway. Explain the operator impact,
+add regression coverage and list every check that was actually run.
 
-Security vulnerabilities must not be reported in a public issue, discussion,
-or pull request. Follow the [security policy](.github/SECURITY.md) instead.
+Security concerns must follow [.github/SECURITY.md](.github/SECURITY.md).
+Never include a real secret while discussing or testing a change.
 
-## Prerequisites and setup
+## Setup
 
-- Node.js 24 (see [`.node-version`](.node-version))
-- Corepack with pnpm 10.34.1 (see the `packageManager` field in
-  [`package.json`](package.json))
-- Platform tooling required by the package you are changing
+Requirements:
 
-```shell
+- the Node.js version pinned in [`.node-version`](.node-version)
+- Corepack and the pnpm version pinned in [`package.json`](package.json)
+- Linux Docker when changing or validating the production container
+
+```sh
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
-This repository is a pnpm workspace with four main packages:
+The active workspace is intentionally small:
 
-| Package          | Responsibility                                                |
-| ---------------- | ------------------------------------------------------------- |
-| `packages/ui`    | Nuxt dashboard, static panel, and desktop renderer            |
-| `packages/agent` | Shared mihomo lifecycle and profile-management logic          |
-| `apps/server`    | Nitro server and container runtime                            |
-| `apps/desktop`   | Electron main process, preload, native helpers, and packaging |
+| Workspace        | Responsibility                                              |
+| ---------------- | ----------------------------------------------------------- |
+| `packages/ui`    | Chinese four-page Web console                               |
+| `packages/agent` | Gateway state, subscriptions, Mihomo config and supervision |
+| `apps/server`    | Authentication, API integration and container entrypoint    |
 
-Read [CONTEXT.md](CONTEXT.md) for the system boundaries. UI work should also
-follow [PRODUCT.md](packages/ui/PRODUCT.md) and
-[DESIGN.md](packages/ui/DESIGN.md). Agent behavior and its HTTP contract are
-documented in [MANUAL.md](packages/agent/MANUAL.md).
+Read [CONTEXT.md](CONTEXT.md) before changing a cross-package contract. UI work
+must also follow [PRODUCT.md](packages/ui/PRODUCT.md) and
+[DESIGN.md](packages/ui/DESIGN.md).
 
-## Develop and build
+## Development commands
 
-Run commands from the repository root unless noted otherwise.
+Run commands from the repository root:
 
-| Scope   | Develop            | Build                |
-| ------- | ------------------ | -------------------- |
-| UI      | `pnpm dev`         | `pnpm build:ui`      |
-| Server  | `pnpm dev:server`  | `pnpm build:server`  |
-| Desktop | `pnpm dev:desktop` | `pnpm build:desktop` |
-
-`pnpm build:server` builds the Nitro server and its agent dependency; it does
-not build the UI. `pnpm build` builds the UI and server. `pnpm build:desktop`
-builds the Electron TypeScript bundles only; it does not create an installer.
-Official installers additionally require a generated desktop renderer, the
-correct mihomo binary and platform packaging tools. Use
-[the release workflow](.github/workflows/release.yml) as the source of truth for
-desktop packaging.
-
-## Tests and checks
-
-Run the checks relevant to every package you changed. Before opening a pull
-request, also run the workspace-wide static checks when practical:
-
-```shell
+```sh
+pnpm dev             # Web development server
+pnpm dev:server      # build Web, then start the all-in-one Server
+pnpm test
 pnpm typecheck
 pnpm lint
+pnpm build
 ```
 
-`pnpm lint` currently runs the UI linter with `--fix`; inspect its changes
-before staging them.
+Targeted checks are useful while iterating:
 
-Package tests are intentionally explicit:
-
-```shell
-pnpm --filter @metacubexd/ui test:unit
-pnpm --filter @metacubexd/ui test:e2e
+```sh
 pnpm --filter @metacubexd/agent test
 pnpm --filter @metacubexd/server test
-pnpm --filter @metacubexd/desktop test
+pnpm --filter @metacubexd/ui test:unit
+pnpm --filter @metacubexd/ui test:e2e
 ```
 
-UI end-to-end tests require Playwright's Chromium binary:
+The Web end-to-end suite requires Playwright Chromium. Install it with:
 
-```shell
+```sh
 pnpm --filter @metacubexd/ui exec playwright install chromium
 ```
 
-If a check is not applicable or cannot run on your platform, state that clearly
-in the pull request. Do not imply that unrun checks passed.
+## Implementation rules
 
-## Documentation and translations
+- Use incremental TDD: obtain the expected failing test, make the smallest
+  implementation, then run the owning package's test and typecheck.
+- Keep ports `10001`–`10010`, Web `127.0.0.1:8080` and Controller
+  `127.0.0.1:9090` fixed. Never add a public path to the Controller.
+- Preserve TCP-only authenticated SOCKS, disabled UDP/IPv6 and fail-closed
+  routing without `DIRECT`.
+- Keep every gateway mutation transactional. Do not persist a candidate until
+  runtime and listener verification pass.
+- Keep the four Web pages and Chinese-only operator vocabulary synchronized
+  with API DTOs.
+- Pin direct dependencies exactly and regenerate `pnpm-lock.yaml` through pnpm;
+  do not hand-edit the lockfile.
+- Do not add an abstraction, dependency or configuration switch for a need that
+  is not present in the approved product scope.
+- Do not edit generated `.nuxt`, `.nitro`, `.output` or runtime data.
 
-- Update the README and package documentation when behavior, configuration,
-  architecture, or deployment changes.
-- Keep the seven locale files in `packages/ui/i18n/locales` aligned when adding
-  or changing user-facing text.
-- Update screenshots when the visible UI materially changes.
-- Never put tokens, subscription URLs, profile contents, private keys, or other
-  credentials in fixtures, logs, screenshots, issues, or pull requests.
+## Secrets and test data
 
-Markdown files can be checked with the repository's Prettier installation:
+The following are sensitive: administrator passwords, session cookies, CSRF
+tokens, gateway master keys, Controller secrets, SOCKS passwords, subscription
+URLs, node share links and encrypted state. Use obvious fake values in fixtures.
+Do not place sensitive values in logs, snapshots, screenshots, issues, pull
+requests or evidence files.
 
-```shell
+Runtime files belong only in ignored `data/`, `.runtime/` or disposable test
+directories. Tests must not alter a host firewall, system routing or a real
+deployment.
+
+## Deployment changes
+
+Run the static contract checks for deployment or distribution changes:
+
+```sh
+node deploy/verify-contract.mjs
+node deploy/verify-distribution.mjs
+```
+
+When Linux Docker is available, build and smoke a local image:
+
+```sh
+docker buildx build --load --platform linux/amd64 \
+  -f apps/server/Dockerfile -t socks-gateway:mvp .
+bash deploy/smoke.sh --image socks-gateway:mvp --evidence ./smoke-evidence.jsonl
+```
+
+If Docker, Linux host networking or a real node is unavailable, record the
+corresponding gate as `not-run`; do not present a static template as runtime
+validation.
+
+## Documentation and pull requests
+
+Update operator docs when behavior, networking, configuration, provenance or
+the four-page workflow changes. Format Markdown with the repository Prettier:
+
+```sh
 pnpm exec prettier --check README.md CONTRIBUTING.md .github/SECURITY.md
 ```
 
-## Commits and pull requests
+Use focused Conventional Commits, for example
+`fix(agent): preserve the active route on apply failure`. A pull request should
+include:
 
-Use focused [Conventional Commits](https://www.conventionalcommits.org/) such
-as `fix(desktop): quote Windows proxy paths` or
-`docs: clarify server authentication`. Avoid committing generated build output.
-Only change `pnpm-lock.yaml` when dependencies or their resolution changed.
-
-Every pull request should include:
-
-- A concise description of the problem and solution.
-- A linked issue when one exists.
-- Tests and manual checks performed, including OS and architecture.
-- Before-and-after screenshots or recordings for visible UI changes.
-- Compatibility, migration, permission, and security implications.
-
-## Desktop smoke testing
-
-Changes to Electron lifecycle, system proxy, TUN, native helpers, kernel
-management, or packaging need real-platform smoke testing. Test macOS, Windows,
-and Linux when the change can affect all three; otherwise list untested
-platforms in the pull request.
-
-On each applicable platform, verify:
-
-- The app installs or launches, starts its bundled kernel, and opens a working
-  managed dashboard endpoint.
-- A profile can be imported, edited, validated, activated, and used after the
-  kernel restart.
-- System proxy can be enabled and disabled, and quitting does not leave an
-  unintended proxy configuration behind.
-- TUN setup requests the expected privilege, can be disabled again, and reports
-  helper or service failures clearly.
-- Tray, window close, reopen, and quit behavior remain correct.
-- Logs and diagnostics do not expose secrets.
-
-Also cover platform-specific integration points:
-
-| Platform | Checks                                                                                                                                            |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS    | Gatekeeper/quarantine behavior, helper installation, and Apple Silicon/Intel when applicable                                                      |
-| Windows  | SmartScreen/UAC, system-proxy registry writes, the TUN service, and x64/arm64 when applicable                                                     |
-| Linux    | AppImage, deb, rpm, or pacman package launch; `pkexec`/systemd integration; desktop proxy settings; `/dev/net/tun`; and x64/arm64 when applicable |
-
-Unsigned local packages are development artifacts. Do not present them as an
-official release or ask users to bypass platform security controls without a
-clear, scoped reason.
+- the problem and minimal solution;
+- tests and manual checks, including platform;
+- visible before/after evidence for Web changes;
+- deployment, migration and security implications;
+- every unrun acceptance gate.

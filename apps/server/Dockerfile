@@ -35,6 +35,10 @@ WORKDIR /app
 COPY --from=build /repo/apps/server/.output ./
 COPY --from=build /repo/packages/ui/.output/public ./ui-dist
 COPY --from=kernel /usr/local/bin/mihomo /usr/local/bin/mihomo
+COPY LICENSE /usr/share/licenses/metacubexd/LICENSE
+COPY NOTICE /usr/share/doc/metacubexd/NOTICE
+COPY third_party/mihomo/LICENSE /usr/share/licenses/mihomo/LICENSE
+COPY third_party/mihomo/SOURCE.md /usr/share/doc/mihomo/SOURCE.md
 COPY --chmod=0755 apps/server/docker-entrypoint.sh /docker-entrypoint.sh
 ENV NODE_ENV=production \
     UI_DIST=/app/ui-dist \
