@@ -1,3 +1,4 @@
+import type { GatewayMode } from './gateway-state'
 import type { MihomoSupervisor } from './types'
 import { Buffer } from 'node:buffer'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -12,7 +13,7 @@ import {
   loadOrCreateKey,
 } from './secure-store'
 
-export type GatewayMode = 'manual' | 'auto' | 'failover'
+export type { GatewayMode } from './gateway-state'
 
 export interface GatewayConfig {
   enabled: boolean

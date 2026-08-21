@@ -27,11 +27,27 @@ export type {
   GatewayCredential,
   GatewayManager,
   GatewayManagerOptions,
-  GatewayMode,
   GatewayNode,
   GatewayRevision,
   GatewayStatus,
 } from './gateway'
+export {
+  createInitialGatewayStateV2,
+  GATEWAY_PORTS,
+  migrateV1ToV2,
+  validateGatewayStateV2,
+} from './gateway-state'
+export type {
+  GatewayHop,
+  GatewayMode,
+  GatewayPort,
+  GatewayStateV1,
+  GatewayStateV2,
+  StoredGatewayCredential,
+  StoredGatewayRevision,
+  StoredNode,
+  StoredNodeSource,
+} from './gateway-state'
 export { createGatewaySubscriptionManager } from './gateway-subscriptions'
 export type {
   GatewayImportPreview,

@@ -6,10 +6,14 @@ import {
   AGENT_VERSION,
   createAgent,
   createControlRouter,
+  createInitialGatewayStateV2,
   createProfileStore,
   createSupervisor,
+  GATEWAY_PORTS,
+  migrateV1ToV2,
   MIHOMO_VERSION,
   mihomoAsset,
+  validateGatewayStateV2,
 } from './index'
 
 function opts() {
@@ -146,5 +150,9 @@ describe('createAgent', () => {
     expect(typeof mihomoAsset).toBe('function')
     expect(MIHOMO_VERSION.startsWith('v')).toBe(true)
     expect(Number.isInteger(Number(MIHOMO_VERSION[1]))).toBe(true)
+    expect(GATEWAY_PORTS).toHaveLength(10)
+    expect(typeof createInitialGatewayStateV2).toBe('function')
+    expect(typeof migrateV1ToV2).toBe('function')
+    expect(typeof validateGatewayStateV2).toBe('function')
   })
 })
