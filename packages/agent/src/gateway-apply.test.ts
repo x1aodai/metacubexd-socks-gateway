@@ -176,7 +176,9 @@ async function setup(
     writeState(dataDir, state),
     secureStore.atomicWrite(activeConfigPath, active),
   ])
-  const controllerFetch = vi.fn(async () => new Response('{}', { status: 200 }))
+  const controllerFetch = vi.fn<typeof fetch>(
+    async () => new Response('{}', { status: 200 }),
+  )
   const manager = createGatewayManager({
     dataDir,
     activeConfigPath,
@@ -259,6 +261,7 @@ describe('transactional gateway apply and bootstrap', () => {
     state.gateway.selectedNode = 'missing-node'
     const context = await setup(state)
     const originalRaw = await readFile(join(context.dataDir, 'gateway.enc'))
+    const originalActive = await readFile(context.activeConfigPath)
 
     await expect(context.manager.bootstrap()).rejects.toThrow(/cannot map/i)
 
@@ -268,6 +271,18 @@ describe('transactional gateway apply and bootstrap', () => {
     expect(await readFile(join(context.dataDir, 'gateway.enc.v1.bak'))).toEqual(
       originalRaw,
     )
+    expect(await readFile(context.activeConfigPath)).toEqual(originalActive)
+    const audit = await readFile(join(context.dataDir, 'audit.jsonl'), 'utf8')
+    expect(audit).not.toContain('missing-node')
+    const failure = JSON.parse(audit.trim()) as Record<string, unknown>
+    expect(failure).toMatchObject({
+      action: 'gateway.apply.failed',
+      result: 'failure',
+    })
+    expect(JSON.parse(String(failure.detail))).toEqual({
+      reason: 'gateway.bootstrap',
+      errorCode: 'VALIDATION_FAILED',
+    })
     expect(context.fake.validate).not.toHaveBeenCalled()
     expect(context.fake.start).not.toHaveBeenCalled()
   })
@@ -517,5 +532,177 @@ describe('transactional gateway apply and bootstrap', () => {
       (await context.manager.listCredentials()).map(({ username }) => username),
     ).toEqual(['alice', 'bob', 'dave'])
     expect(fake.restart).toHaveBeenCalledTimes(2)
+  })
+
+  it('reapplies a cloned current v2 state through the complete apply flow without changing business semantics', async () => {
+    const context = await setup(validV2(1))
+    await context.manager.bootstrap()
+    const before = (await readState(context.dataDir)) as GatewayStateV2
+    const activeBefore = await readFile(context.activeConfigPath)
+
+    await context.manager.reapply()
+
+    const after = (await readState(context.dataDir)) as GatewayStateV2
+    expect({
+      ports: after.ports,
+      credentials: after.credentials,
+      nodeSources: after.nodeSources,
+    }).toEqual({
+      ports: before.ports,
+      credentials: before.credentials,
+      nodeSources: before.nodeSources,
+    })
+    expect(await readFile(context.activeConfigPath)).toEqual(activeBefore)
+    expect(after.revisions).toHaveLength(before.revisions.length + 1)
+    expect(after.revisions[0]?.reason).toBe('gateway.reapply')
+    expect(context.fake.validate).toHaveBeenCalledTimes(2)
+    expect(context.fake.start).toHaveBeenCalledOnce()
+    expect(context.fake.restart).toHaveBeenCalledOnce()
+    expect(context.verifyListener).toHaveBeenCalledTimes(2)
+    expect(
+      context.controllerFetch.mock.calls.map(([url]) => String(url)),
+    ).toEqual([
+      'http://127.0.0.1:9090/version',
+      'http://127.0.0.1:9090/version',
+    ])
+    const auditLines = (
+      await readFile(join(context.dataDir, 'audit.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(auditLines.at(-1)).toMatchObject({
+      action: 'gateway.reapply',
+      result: 'success',
+    })
+  })
+
+  it('serializes concurrent reapply transactions', async () => {
+    const context = await setup(validV2(1))
+    await context.manager.bootstrap()
+    let releaseFirst!: () => void
+    const firstRestartGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let restartIndex = 0
+    context.fake.restart.mockImplementation(async () => {
+      restartIndex += 1
+      if (restartIndex === 1) await firstRestartGate
+      return runningState()
+    })
+
+    const first = context.manager.reapply()
+    const second = context.manager.reapply()
+    await vi.waitFor(() =>
+      expect(context.fake.restart).toHaveBeenCalledTimes(1),
+    )
+    expect(context.fake.validate).toHaveBeenCalledTimes(2)
+
+    releaseFirst()
+    await Promise.all([first, second])
+
+    expect(context.fake.restart).toHaveBeenCalledTimes(2)
+    expect(context.fake.validate).toHaveBeenCalledTimes(3)
+    const after = (await readState(context.dataDir)) as GatewayStateV2
+    expect(after.revisions.map(({ reason }) => reason).slice(0, 2)).toEqual([
+      'gateway.reapply',
+      'gateway.reapply',
+    ])
+  })
+
+  it('rolls a failed reapply back byte-for-byte and audits only a fixed error code', async () => {
+    const context = await setup(validV2(1))
+    await context.manager.bootstrap()
+    const statePath = join(context.dataDir, 'gateway.enc')
+    const before = {
+      state: await readFile(statePath),
+      active: await readFile(context.activeConfigPath),
+      revisions: await revisionFiles(context.dataDir),
+      audit: await readFile(join(context.dataDir, 'audit.jsonl'), 'utf8'),
+    }
+    context.fake.restart
+      .mockResolvedValueOnce({
+        ...runningState(),
+        status: 'errored',
+        lastError:
+          'restart failed https://private.invalid/?secret=runtime-error-canary',
+      })
+      .mockResolvedValueOnce(runningState())
+
+    await expect(context.manager.reapply()).rejects.toThrow('restart failed')
+
+    expect(await readFile(statePath)).toEqual(before.state)
+    expect(await readFile(context.activeConfigPath)).toEqual(before.active)
+    expect(await revisionFiles(context.dataDir)).toEqual(before.revisions)
+    const auditAfter = await readFile(
+      join(context.dataDir, 'audit.jsonl'),
+      'utf8',
+    )
+    expect(auditAfter.startsWith(before.audit)).toBe(true)
+    expect(auditAfter).not.toContain('private.invalid')
+    expect(auditAfter).not.toContain('runtime-error-canary')
+    const failure = JSON.parse(auditAfter.trim().split('\n').at(-1)!) as Record<
+      string,
+      unknown
+    >
+    expect(failure).toMatchObject({
+      action: 'gateway.apply.failed',
+      result: 'failure',
+    })
+    expect(JSON.parse(String(failure.detail))).toEqual({
+      reason: 'gateway.reapply',
+      errorCode: 'RUNTIME_FAILED',
+    })
+  })
+
+  it('audits a candidate write failure before runtime without changing persisted bytes', async () => {
+    const context = await setup(validV2(1))
+    await context.manager.bootstrap()
+    const statePath = join(context.dataDir, 'gateway.enc')
+    const auditPath = join(context.dataDir, 'audit.jsonl')
+    const before = {
+      state: await readFile(statePath),
+      active: await readFile(context.activeConfigPath),
+      revisions: await revisionFiles(context.dataDir),
+      audit: await readFile(auditPath, 'utf8'),
+    }
+    const originalAtomicWrite = secureStore.atomicWrite
+    const writeSpy = vi
+      .spyOn(secureStore, 'atomicWrite')
+      .mockImplementation(async (path, data, mode) => {
+        if (String(path).includes('.active.gateway.'))
+          throw new Error(
+            'candidate write failed https://private.invalid/?secret=candidate-canary',
+          )
+        await originalAtomicWrite(path, data, mode)
+      })
+
+    try {
+      await expect(context.manager.reapply()).rejects.toThrow(
+        'candidate write failed',
+      )
+    } finally {
+      writeSpy.mockRestore()
+    }
+
+    expect(await readFile(statePath)).toEqual(before.state)
+    expect(await readFile(context.activeConfigPath)).toEqual(before.active)
+    expect(await revisionFiles(context.dataDir)).toEqual(before.revisions)
+    const auditAfter = await readFile(auditPath, 'utf8')
+    expect(auditAfter.startsWith(before.audit)).toBe(true)
+    expect(auditAfter).not.toContain('private.invalid')
+    expect(auditAfter).not.toContain('candidate-canary')
+    const failure = JSON.parse(auditAfter.trim().split('\n').at(-1)!) as Record<
+      string,
+      unknown
+    >
+    expect(failure).toMatchObject({
+      action: 'gateway.apply.failed',
+      result: 'failure',
+    })
+    expect(JSON.parse(String(failure.detail))).toEqual({
+      reason: 'gateway.reapply',
+      errorCode: 'APPLY_FAILED',
+    })
   })
 })

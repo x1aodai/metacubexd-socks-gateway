@@ -23,14 +23,21 @@ export { AdminAuthError, createAdminAuth } from './admin-auth'
 export type { AdminAuth, AdminAuthOptions, AdminSession } from './admin-auth'
 export { createGatewayManager, GatewayValidationError } from './gateway'
 export type {
+  GatewayApplyErrorCode,
   GatewayConfig,
   GatewayCredential,
+  GatewayHealth,
+  GatewayHopStatus,
+  GatewayLastApply,
+  GatewayListenerErrorCode,
+  GatewayListenerStatus,
   GatewayManager,
   GatewayManagerOptions,
   GatewayNode,
   GatewayNodeImpact,
   GatewayNodeTestErrorCode,
   GatewayNodeTestResult,
+  GatewayPortStatus,
   GatewayRevision,
   GatewayStatus,
 } from './gateway'
@@ -102,7 +109,10 @@ export type CreateAgentOptions = CreateSupervisorOptions & {
   systemProxy?: SystemProxyController // OS proxy controller; enables 'system-proxy'
   kernelManager?: KernelManager // kernel version mgmt; enables 'kernel-version'
   tunController?: TunController // TUN mode controller; enables 'tun'
-  gateway?: Omit<GatewayManagerOptions, 'activeConfigPath' | 'controllerUrl'>
+  gateway?: Omit<
+    GatewayManagerOptions,
+    'activeConfigPath' | 'controllerUrl' | 'agentVersion'
+  >
 }
 
 export interface AgentInfo {
@@ -128,6 +138,7 @@ export function createAgent(opts: CreateAgentOptions) {
         activeConfigPath: opts.activeConfigPath,
         controllerUrl: opts.externalController ?? '127.0.0.1:9090',
         controllerSecret: opts.secret,
+        agentVersion: AGENT_VERSION,
       })
     : undefined
   const supervisor = createSupervisor({

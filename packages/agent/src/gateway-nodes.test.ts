@@ -160,7 +160,9 @@ describe('stable gateway node library', () => {
     expect(JSON.stringify(nodes)).not.toContain('upstream-secret')
 
     await expect(
-      manager.appendImportedNodes(Array.from({length: 10_001}).fill(node)),
+      manager.appendImportedNodes(
+        Array.from({ length: 10_001 }).fill(node) as NormalizedNode[],
+      ),
     ).resolves.toBeDefined()
     expect(await manager.listNodes()).toHaveLength(1)
   })

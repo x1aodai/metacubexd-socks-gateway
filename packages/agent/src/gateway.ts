@@ -8,14 +8,19 @@ import type {
   StoredNode,
 } from './gateway-state'
 import type { NormalizedNode } from './subscription/types'
-import type { MihomoSupervisor } from './types'
+import type { KernelStatus, MihomoSupervisor } from './types'
 import { Buffer } from 'node:buffer'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { chmod, mkdir, open, readdir, readFile, unlink } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 import { parse, stringify } from 'yaml'
-import { generateGatewayConfig } from './gateway-config'
+import {
+  gatewayGroupName,
+  gatewayLandingNodeName,
+  gatewayRuntimeNodeName,
+  generateGatewayConfig,
+} from './gateway-config'
 import {
   createInitialGatewayStateV2,
   GATEWAY_PORTS,
@@ -26,6 +31,7 @@ import {
   atomicWrite,
   decryptJson,
   encryptJson,
+  loadExistingKey,
   loadOrCreateKey,
 } from './secure-store'
 import { stableNodeId } from './subscription/parse'
@@ -101,6 +107,7 @@ export interface GatewayManagerOptions {
   controllerUrl: string
   controllerSecret?: string
   controllerCorsOrigins?: string[]
+  agentVersion?: string
   fetch?: typeof fetch
   now?: () => number
   verifyListener?: (
@@ -109,22 +116,68 @@ export interface GatewayManagerOptions {
   ) => Promise<boolean>
 }
 
+export type GatewayHealth = 'healthy' | 'unhealthy' | 'unknown' | 'disabled'
+
+export type GatewayListenerErrorCode =
+  'NO_ENABLED_CREDENTIAL' | 'UNREACHABLE' | 'PROBE_FAILED'
+
+export type GatewayApplyErrorCode =
+  | 'VALIDATION_FAILED'
+  | 'RUNTIME_FAILED'
+  | 'VERIFICATION_FAILED'
+  | 'PERSIST_FAILED'
+  | 'APPLY_FAILED'
+
+export interface GatewayListenerStatus {
+  id: number
+  port: number
+  enabled: boolean
+  health: GatewayHealth
+  reachable: boolean | null
+  errorCode: GatewayListenerErrorCode | null
+}
+
+export interface GatewayHopStatus {
+  index: number
+  mode: GatewayMode
+  activeNodeId: string | null
+  health: GatewayHealth
+}
+
+export interface GatewayPortStatus {
+  id: number
+  port: number
+  enabled: boolean
+  health: GatewayHealth
+  hops: GatewayHopStatus[]
+}
+
+export interface GatewayLastApply {
+  result: 'success' | 'failure'
+  at: number
+  reason: string
+  errorCode: GatewayApplyErrorCode | null
+}
+
 export interface GatewayStatus {
-  healthy: boolean
-  running: boolean
-  listenerReachable: boolean
-  controllerReachable: boolean
-  activeNode?: string
-  lastAppliedAt?: number
-  lastError?: string
-  mode?: GatewayMode
-  port?: number
-  nodes?: GatewayNode[]
+  services: {
+    agent: { state: 'running'; health: 'healthy' }
+    mihomo: {
+      state: KernelStatus | 'unknown'
+      health: Exclude<GatewayHealth, 'disabled'>
+      controllerReachable: boolean
+    }
+  }
+  versions: { agent: string; mihomo: string | null }
+  listeners: GatewayListenerStatus[]
+  ports: GatewayPortStatus[]
+  lastApply: GatewayLastApply | null
 }
 
 export interface GatewayManager {
   bindSupervisor: (supervisor: MihomoSupervisor) => void
   bootstrap: () => Promise<void>
+  reapply: () => Promise<void>
   overlayConfig: (content: string) => Promise<string>
   getGateway: () => Promise<GatewayConfig>
   updateGateway: (
@@ -222,26 +275,25 @@ export function createGatewayManager(
   async function loadState(): Promise<PersistedState> {
     if (!statePromise) {
       statePromise = (async () => {
+        let raw: string
         try {
-          const [raw, key] = await Promise.all([
-            readFile(statePath, 'utf8'),
-            loadOrCreateKey(options.dataDir, options.masterKey),
-          ])
-          const loaded = decryptJson<PersistedState>(raw, key)
-          if (loaded.version === 1) {
-            loaded.nodeSources ??= {}
-            loaded.revisions ??= []
-            return loaded
-          }
-          if (loaded.version === 2) {
-            validateGatewayStateV2(loaded)
-            return loaded
-          }
-          throw new Error('unsupported gateway state version')
+          raw = await readFile(statePath, 'utf8')
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           return initialState()
         }
+        const key = await loadExistingKey(options.dataDir, options.masterKey)
+        const loaded = decryptJson<PersistedState>(raw, key)
+        if (loaded.version === 1) {
+          loaded.nodeSources ??= {}
+          loaded.revisions ??= []
+          return loaded
+        }
+        if (loaded.version === 2) {
+          validateGatewayStateV2(loaded)
+          return loaded
+        }
+        throw new Error('unsupported gateway state version')
       })()
     }
     return statePromise
@@ -295,6 +347,26 @@ export function createGatewayManager(
       await handle.close()
     }
     await chmod(auditPath, 0o600)
+  }
+
+  async function readLastApply(): Promise<GatewayLastApply | null> {
+    let raw: string
+    try {
+      raw = await readFile(auditPath, 'utf8')
+    } catch {
+      return null
+    }
+    const lines = raw.split(/\r?\n/).reverse()
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const projected = projectLastApply(JSON.parse(line) as unknown)
+        if (projected) return projected
+      } catch {
+        // A malformed legacy line must not make status fail or expose its text.
+      }
+    }
+    return null
   }
 
   async function readActive(): Promise<{ content: string; exists: boolean }> {
@@ -561,23 +633,26 @@ export function createGatewayManager(
     if (!supervisor) throw new Error('gateway supervisor is not bound')
     const previous = cloneState(previousState ?? (await loadState()))
     const previousStateBytes = await readPersistedBytes()
-    const next = cloneState(candidateState)
-    validateGatewayStateV2(next)
-    const previousActive = await readActive()
-    const candidate = generateGatewayConfig(
-      baseContent ?? previousActive.content,
-      next,
-    )
     const candidatePath = join(
       options.dataDir,
       `.active.gateway.${process.pid}.${randomBytes(4).toString('hex')}.yaml`,
     )
-    await atomicWrite(candidatePath, candidate)
+    let previousActive: { content: string; exists: boolean } | undefined
     let revision: GatewayRevision | undefined
     let activeWriteStarted = false
     let processStartAttempted = false
     let stateWriteStarted = false
+    let validatingState = true
     try {
+      const next = cloneState(candidateState)
+      validateGatewayStateV2(next)
+      validatingState = false
+      previousActive = await readActive()
+      const candidate = generateGatewayConfig(
+        baseContent ?? previousActive.content,
+        next,
+      )
+      await atomicWrite(candidatePath, candidate)
       const validation = await supervisor.validate(candidatePath)
       if (!validation.valid)
         throw new GatewayValidationError(
@@ -615,7 +690,7 @@ export function createGatewayManager(
       }).catch(() => {})
     } catch (error) {
       pendingState = undefined
-      if (activeWriteStarted)
+      if (activeWriteStarted && previousActive)
         if (previousActive.exists) {
           await atomicWrite(options.activeConfigPath, previousActive.content)
         } else {
@@ -645,7 +720,12 @@ export function createGatewayManager(
         await unlink(join(revisionsDir, `${revision.id}.enc`)).catch(() => {})
       await audit('gateway.apply.failed', {
         reason,
-        error: error instanceof Error ? error.message : String(error),
+        errorCode: classifyApplyError(
+          error,
+          processStartAttempted,
+          stateWriteStarted,
+          validatingState,
+        ),
       }).catch(() => {})
       throw error
     } finally {
@@ -757,13 +837,20 @@ export function createGatewayManager(
         if (!supervisor) throw new Error('gateway supervisor is not bound')
         const previous = cloneState(await loadState())
         let next: GatewayStateV2
-        if (previous.version === 1) {
-          await backupV1State()
-          next = migrateV1ToV2(previous)
-        } else {
-          next = cloneState(previous)
+        try {
+          if (previous.version === 1) {
+            await backupV1State()
+            next = migrateV1ToV2(previous)
+          } else {
+            next = cloneState(previous)
+          }
+        } catch (error) {
+          await audit('gateway.apply.failed', {
+            reason: 'gateway.bootstrap',
+            errorCode: 'VALIDATION_FAILED',
+          }).catch(() => {})
+          throw error
         }
-        validateGatewayStateV2(next)
         await cleanupOrphanRevisionFiles(previous.revisions)
         const lifecycle =
           supervisor.getState().status === 'running' ? 'restart' : 'start'
@@ -776,6 +863,12 @@ export function createGatewayManager(
           previous.version === 1,
         )
         bootstrapped = true
+      })
+    },
+    reapply() {
+      return transaction(async () => {
+        const current = cloneState(await loadV2State())
+        await apply(current, 'gateway.reapply')
       })
     },
     async overlayConfig(content) {
@@ -800,61 +893,119 @@ export function createGatewayManager(
       })
     },
     async status() {
-      const state = await loadState()
-      const view = gatewayView(state)
+      const persisted = await loadState()
+      const state =
+        persisted.version === 2 ? persisted : migrateV1ToV2(persisted)
       const kernel = supervisor?.getState()
-      const controllerReachable = await controllerRequest('/version')
-        .then((r) => r.ok)
-        .catch(() => false)
-      const credential = state.credentials.find((item) => item.enabled)
-      const listenerReachable =
-        !view.enabled ||
-        Boolean(
-          credential &&
-          (await (options.verifyListener ?? verifySocksAuthentication)(
-            view.port,
-            credential,
-          )),
+      const credentials = new Map(
+        state.credentials.map((credential) => [credential.id, credential]),
+      )
+      const verifyListener = options.verifyListener ?? verifySocksAuthentication
+      const controllerPromise = controllerRequest('/proxies', { method: 'GET' })
+        .then(async (response) => {
+          if (!response.ok)
+            return {
+              reachable: false,
+              proxies: undefined as Record<string, unknown> | undefined,
+            }
+          const body = (await response.json()) as unknown
+          return {
+            reachable: true,
+            proxies:
+              isRecord(body) && isRecord(body.proxies)
+                ? body.proxies
+                : undefined,
+          }
+        })
+        .catch(() => ({
+          reachable: false,
+          proxies: undefined as Record<string, unknown> | undefined,
+        }))
+      const listenersPromise = Promise.all(
+        state.ports.map(async (port): Promise<GatewayListenerStatus> => {
+          const base = {
+            id: port.id,
+            port: port.port,
+            enabled: port.enabled,
+          }
+          if (!port.enabled)
+            return {
+              ...base,
+              health: 'disabled',
+              reachable: null,
+              errorCode: null,
+            }
+          const credential = port.credentialIds
+            .map((id) => credentials.get(id))
+            .find((item) => item?.enabled)
+          if (!credential)
+            return {
+              ...base,
+              health: 'unhealthy',
+              reachable: false,
+              errorCode: 'NO_ENABLED_CREDENTIAL',
+            }
+          try {
+            const reachable = await verifyListener(port.port, credential)
+            return {
+              ...base,
+              health: reachable ? 'healthy' : 'unhealthy',
+              reachable,
+              errorCode: reachable ? null : 'UNREACHABLE',
+            }
+          } catch {
+            return {
+              ...base,
+              health: 'unhealthy',
+              reachable: false,
+              errorCode: 'PROBE_FAILED',
+            }
+          }
+        }),
+      )
+      const [controller, listeners, lastApply] = await Promise.all([
+        controllerPromise,
+        listenersPromise,
+        readLastApply(),
+      ])
+      const enabledNodes = enabledStateByNodeId(state)
+      const listenerById = new Map(
+        listeners.map((listener) => [listener.id, listener]),
+      )
+      const ports = state.ports.map((port): GatewayPortStatus => {
+        const hops = port.hops.map((hop, index) =>
+          projectGatewayHop(port, hop, index, controller.proxies, enabledNodes),
         )
-      let activeNode: string | undefined
-      if (controllerReachable) {
-        const activeGroup = await controllerRequest('/proxies/GATEWAY')
-          .then((response) => (response.ok ? response.json() : undefined))
-          .then((body) =>
-            isRecord(body) && typeof body.now === 'string'
-              ? body.now
-              : undefined,
-          )
-          .catch(() => undefined)
-        activeNode = activeGroup
-        if (activeGroup && MANAGED_GROUPS.has(activeGroup)) {
-          activeNode = await controllerRequest(
-            `/proxies/${encodeURIComponent(activeGroup)}`,
-          )
-            .then((response) => (response.ok ? response.json() : undefined))
-            .then((body) =>
-              isRecord(body) && typeof body.now === 'string'
-                ? body.now
-                : activeGroup,
-            )
-            .catch(() => activeGroup)
+        return {
+          id: port.id,
+          port: port.port,
+          enabled: port.enabled,
+          health: port.enabled
+            ? gatewayPortHealth(listenerById.get(port.id), hops)
+            : 'disabled',
+          hops,
         }
-      }
-      const nodes = await readNodes()
+      })
+      const mihomoHealth = gatewayMihomoHealth(
+        kernel?.status,
+        controller.reachable && Boolean(controller.proxies),
+      )
       return {
-        healthy:
-          kernel?.status === 'running' &&
-          controllerReachable &&
-          listenerReachable,
-        running: kernel?.status === 'running',
-        listenerReachable,
-        controllerReachable,
-        activeNode,
-        mode: view.mode,
-        port: view.port,
-        nodes,
-        lastAppliedAt: state.lastAppliedAt,
-        lastError: state.lastError ?? kernel?.lastError,
+        services: {
+          agent: { state: 'running', health: 'healthy' },
+          mihomo: {
+            state: kernel?.status ?? 'unknown',
+            health: mihomoHealth,
+            controllerReachable: controller.reachable,
+          },
+        },
+        versions: {
+          agent: options.agentVersion ?? 'unknown',
+          mihomo: kernel?.version ?? null,
+        },
+        listeners,
+        ports,
+        lastApply,
       }
     },
     async listPorts() {
@@ -1198,6 +1349,135 @@ export function createGatewayManager(
       })
     },
   }
+}
+
+function projectGatewayHop(
+  port: GatewayPort,
+  hop: GatewayHop,
+  index: number,
+  proxies: Readonly<Record<string, unknown>> | undefined,
+  enabledNodes: ReadonlyMap<string, boolean>,
+): GatewayHopStatus {
+  const base = { index: index + 1, mode: hop.mode }
+  if (!port.enabled) return { ...base, activeNodeId: null, health: 'disabled' }
+  if (!proxies) return { ...base, activeNodeId: null, health: 'unknown' }
+
+  const group = proxies[gatewayGroupName(port.port, index + 1)]
+  if (!isRecord(group) || typeof group.now !== 'string')
+    return { ...base, activeNodeId: null, health: 'unknown' }
+  if (group.now === 'REJECT')
+    return { ...base, activeNodeId: null, health: 'unhealthy' }
+
+  const activeNodeId =
+    hop.nodeIds.find((id) =>
+      index === 0
+        ? gatewayRuntimeNodeName(id) === group.now
+        : gatewayLandingNodeName(port.port, id) === group.now,
+    ) ?? null
+  if (!activeNodeId) return { ...base, activeNodeId: null, health: 'unknown' }
+  if (!enabledNodes.get(activeNodeId))
+    return { ...base, activeNodeId, health: 'unhealthy' }
+
+  const active = proxies[group.now]
+  const health: GatewayHealth =
+    isRecord(active) && active.alive === true
+      ? 'healthy'
+      : isRecord(active) && active.alive === false
+        ? 'unhealthy'
+        : 'unknown'
+  return { ...base, activeNodeId, health }
+}
+
+function gatewayPortHealth(
+  listener: GatewayListenerStatus | undefined,
+  hops: GatewayHopStatus[],
+): GatewayHealth {
+  if (
+    listener?.health === 'unhealthy' ||
+    hops.some(({ health }) => health === 'unhealthy')
+  )
+    return 'unhealthy'
+  if (
+    listener?.health !== 'healthy' ||
+    hops.some(({ health }) => health !== 'healthy')
+  )
+    return 'unknown'
+  return 'healthy'
+}
+
+function gatewayMihomoHealth(
+  status: KernelStatus | undefined,
+  controllerUsable: boolean,
+): Exclude<GatewayHealth, 'disabled'> {
+  if (!status || status === 'starting' || status === 'stopping')
+    return 'unknown'
+  if (status !== 'running') return 'unhealthy'
+  return controllerUsable ? 'healthy' : 'unhealthy'
+}
+
+function classifyApplyError(
+  error: unknown,
+  processStartAttempted: boolean,
+  stateWriteStarted: boolean,
+  validatingState: boolean,
+): GatewayApplyErrorCode {
+  if (validatingState) return 'VALIDATION_FAILED'
+  if (error instanceof GatewayValidationError) return 'VALIDATION_FAILED'
+  if (
+    error instanceof Error &&
+    error.message === 'gateway listener or controller verification failed'
+  )
+    return 'VERIFICATION_FAILED'
+  if (stateWriteStarted) return 'PERSIST_FAILED'
+  if (processStartAttempted) return 'RUNTIME_FAILED'
+  return 'APPLY_FAILED'
+}
+
+const GATEWAY_APPLY_ERROR_CODES: ReadonlySet<GatewayApplyErrorCode> = new Set([
+  'VALIDATION_FAILED',
+  'RUNTIME_FAILED',
+  'VERIFICATION_FAILED',
+  'PERSIST_FAILED',
+  'APPLY_FAILED',
+])
+
+function projectLastApply(value: unknown): GatewayLastApply | null {
+  if (
+    !isRecord(value) ||
+    typeof value.at !== 'number' ||
+    !Number.isFinite(value.at) ||
+    (value.result !== 'success' && value.result !== 'failure') ||
+    typeof value.action !== 'string'
+  )
+    return null
+
+  let detail: Record<string, unknown> = {}
+  if (isRecord(value.detail)) detail = value.detail
+  else if (typeof value.detail === 'string') {
+    try {
+      const parsed = JSON.parse(value.detail) as unknown
+      if (isRecord(parsed)) detail = parsed
+    } catch {
+      // Legacy detail is optional; never project its raw value.
+    }
+  }
+
+  if (value.result === 'failure' && value.action !== 'gateway.apply.failed')
+    return null
+  if (value.result === 'success' && value.action === 'gateway.apply.failed')
+    return null
+  const rawReason = value.result === 'failure' ? detail.reason : value.action
+  const reason =
+    typeof rawReason === 'string' && /^[a-z][a-z0-9.-]{0,127}$/.test(rawReason)
+      ? rawReason
+      : 'unknown'
+  const errorCode =
+    value.result === 'failure' &&
+    typeof detail.errorCode === 'string' &&
+    GATEWAY_APPLY_ERROR_CODES.has(detail.errorCode as GatewayApplyErrorCode)
+      ? (detail.errorCode as GatewayApplyErrorCode)
+      : null
+  return { result: value.result, at: value.at, reason, errorCode }
 }
 
 function validateSourceId(sourceId: string): void {

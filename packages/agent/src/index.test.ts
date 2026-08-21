@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   AGENT_VERSION,
   createAgent,
@@ -58,6 +58,25 @@ describe('createAgent', () => {
       arch: process.arch,
     })
     expect(info.kernel).toMatchObject({ bundled: true, path: '/fake/mihomo' })
+  })
+
+  it('pins the gateway status version to AGENT_VERSION even if runtime input is forged', async () => {
+    const options = opts()
+    const agent = createAgent({
+      ...options,
+      gateway: {
+        dataDir: join(options.homeDir, 'gateway'),
+        fetch: vi.fn(
+          async () =>
+            new Response(JSON.stringify({ proxies: {} }), { status: 200 }),
+        ),
+        agentVersion: 'forged-version',
+      } as never,
+    })
+
+    const status = await agent.gateway!.status()
+
+    expect(status.versions.agent).toBe(AGENT_VERSION)
   })
 
   it('info().features always includes geo-assets (homeDir-backed, no controller)', () => {

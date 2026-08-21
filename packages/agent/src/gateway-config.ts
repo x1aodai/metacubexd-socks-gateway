@@ -39,7 +39,7 @@ export function generateGatewayConfig(
   const proxies = [
     ...[...nodes.values()]
       .filter(({ id }) => firstHopNodeIds.has(id))
-      .map((node) => renderProxy(node, runtimeNodeName(node.id))),
+      .map((node) => renderProxy(node, gatewayRuntimeNodeName(node.id))),
     ...enabledPorts.flatMap((port) => renderLandingProxies(port, nodes)),
   ]
   const credentials = new Map(
@@ -47,7 +47,7 @@ export function generateGatewayConfig(
   )
 
   const listeners = enabledPorts.map((port) => ({
-    name: listenerName(port.port),
+    name: gatewayListenerName(port.port),
     type: 'socks',
     listen: '0.0.0.0',
     port: port.port,
@@ -74,7 +74,7 @@ export function generateGatewayConfig(
       rules: [
         ...enabledPorts.map(
           (port) =>
-            `IN-NAME,${listenerName(port.port)},${finalGroupName(port)}`,
+            `IN-NAME,${gatewayListenerName(port.port)},${finalGroupName(port)}`,
         ),
         'MATCH,REJECT',
       ],
@@ -132,8 +132,8 @@ function renderLandingProxies(
     if (!node) return []
     return [
       {
-        ...renderProxy(node, landingNodeName(port.port, id)),
-        'dialer-proxy': groupName(port.port, 1),
+        ...renderProxy(node, gatewayLandingNodeName(port.port, id)),
+        'dialer-proxy': gatewayGroupName(port.port, 1),
       },
     ]
   })
@@ -146,13 +146,15 @@ function renderGroup(
 ): Record<string, unknown> {
   const hop = port.hops[hopIndex]!
   const group = {
-    name: groupName(port.port, hopIndex + 1),
+    name: gatewayGroupName(port.port, hopIndex + 1),
     type: MODE_TYPES[hop.mode],
     proxies: [
       ...hop.nodeIds
         .filter((id) => enabledNodes.has(id))
         .map((id) =>
-          hopIndex === 0 ? runtimeNodeName(id) : landingNodeName(port.port, id),
+          hopIndex === 0
+            ? gatewayRuntimeNodeName(id)
+            : gatewayLandingNodeName(port.port, id),
         ),
       'REJECT',
     ],
@@ -166,22 +168,22 @@ function renderGroup(
   }
 }
 
-function listenerName(port: number): string {
+export function gatewayListenerName(port: number): string {
   return `gateway-socks-${port}`
 }
 
-function groupName(port: number, hop: number): string {
+export function gatewayGroupName(port: number, hop: number): string {
   return `GW-${port}-H${hop}`
 }
 
 function finalGroupName(port: GatewayPort): string {
-  return groupName(port.port, port.hops.length)
+  return gatewayGroupName(port.port, port.hops.length)
 }
 
-function runtimeNodeName(id: string): string {
+export function gatewayRuntimeNodeName(id: string): string {
   return `GW-NODE-${id}`
 }
 
-function landingNodeName(port: number, id: string): string {
+export function gatewayLandingNodeName(port: number, id: string): string {
   return `GW-${port}-H2-${id}`
 }
