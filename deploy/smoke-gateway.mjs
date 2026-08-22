@@ -245,7 +245,9 @@ async function socksAuth(port, username, password, expected, timeoutMs) {
       ]),
     )
     const authentication = await reader.read(2)
-    const accepted = authentication[0] === 0x01 && authentication[1] === 0x00
+    if (authentication[0] !== 0x01)
+      throw new Error('SOCKS authentication response version was invalid')
+    const accepted = authentication[1] === 0x00
     if (accepted !== expected) throw new Error('unexpected SOCKS auth result')
     return { socket, reader }
   } catch (error) {
@@ -260,8 +262,12 @@ async function expectAnonymousRejected(port, timeoutMs) {
   try {
     socket.write(Buffer.from([0x05, 0x01, 0x00]))
     const reply = await reader.read(2)
-    if (reply[0] !== 0x05 || reply[1] !== 0xff)
-      throw new Error('anonymous SOCKS was not rejected')
+    if (reply[0] !== 0x05)
+      throw new Error('SOCKS method response version was invalid')
+    if (reply[1] === 0x00)
+      throw new Error('anonymous SOCKS authentication was accepted')
+    if (reply[1] !== 0x02 && reply[1] !== 0xff)
+      throw new Error('SOCKS server selected an unexpected method')
   } finally {
     socket.destroy()
   }
@@ -603,26 +609,36 @@ async function verifyAuthentication(
     },
   )
   await reporter.check(
-    'unauthorized-socks-rejection',
-    'anonymous, wrong-password and unbound accounts are rejected',
-    'an unauthorized SOCKS client was accepted',
-    async () => {
-      await expectAnonymousRejected(GATEWAY_PORTS[0], timeoutMs)
-      await expectAuth(
+    'anonymous-socks-rejection',
+    'anonymous SOCKS authentication is rejected',
+    'anonymous SOCKS authentication was accepted',
+    () => expectAnonymousRejected(GATEWAY_PORTS[0], timeoutMs),
+  )
+  await reporter.check(
+    'wrong-password-rejection',
+    'the bound account is rejected with a wrong password',
+    'the bound account was accepted with a wrong password',
+    () =>
+      expectAuth(
         GATEWAY_PORTS[0],
         BOUND_USERNAME,
         `${boundPassword}-wrong`,
         false,
         timeoutMs,
-      )
-      await expectAuth(
+      ),
+  )
+  await reporter.check(
+    'unbound-account-rejection',
+    'an unbound account is rejected',
+    'an unbound account was accepted',
+    () =>
+      expectAuth(
         GATEWAY_PORTS[0],
         UNBOUND_USERNAME,
         unboundPassword,
         false,
         timeoutMs,
-      )
-    },
+      ),
   )
 }
 
