@@ -41,12 +41,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 405, statusMessage: 'Method Not Allowed' })
   }
 
-  // Serve the real static file when one exists at the requested path. Nitro's
-  // build-time `publicAssets` is EMPTY in the Docker image (the UI is built in
-  // a separate stage and injected at runtime via UI_DIST), so without this the
-  // physical assets — config.js, hashed _nuxt/*.js, manifest.webmanifest — are
-  // never matched and every request falls through to the SPA shell below,
-  // which returns text/html and breaks module/script/manifest loading (#2063).
+  // Serve the real static file when one exists at the requested path. The UI is
+  // built separately and injected at runtime via UI_DIST, so this route is the
+  // single owner of the shell and physical assets such as config.js, hashed
+  // _nuxt/*.js and manifest.webmanifest.
   // serveStatic also handles path-traversal rejection, etag/304 and HEAD.
   const served = await serveStatic(event, {
     fallthrough: true,

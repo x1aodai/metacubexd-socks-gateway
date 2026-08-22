@@ -446,6 +446,30 @@ async function waitForHealth(client, timeoutMs) {
   throw new Error('health endpoint timeout')
 }
 
+async function verifyWebBundle(client) {
+  const shell = await client.request('/')
+  const contentType = shell.headers.get('content-type') ?? ''
+  if (!shell.ok || !contentType.toLowerCase().includes('text/html')) {
+    await shell.arrayBuffer().catch(() => {})
+    throw new Error('Web shell is unavailable')
+  }
+  const html = await shell.text()
+  const match = /<script\b[^>]*\bsrc=["'](\/_nuxt\/[^"']+\.js)["'][^>]*>/i.exec(
+    html,
+  )
+  if (!match) throw new Error('generated JavaScript asset is missing')
+
+  const asset = await client.request(match[1])
+  const assetType = asset.headers.get('content-type') ?? ''
+  const body = await asset.arrayBuffer().catch(() => new ArrayBuffer(0))
+  if (
+    !asset.ok ||
+    !assetType.toLowerCase().includes('javascript') ||
+    body.byteLength === 0
+  )
+    throw new Error('generated JavaScript asset is unavailable')
+}
+
 async function runPreflight(reporter) {
   const unavailable = []
   for (const port of REQUIRED_PORTS) {
@@ -983,6 +1007,12 @@ async function main() {
         'the loopback health endpoint is ready',
         'the loopback health endpoint did not become ready',
         () => waitForHealth(client, options.timeoutMs),
+      )
+      await reporter.check(
+        'web-ui-bundle',
+        'the Web shell and one generated JavaScript asset are available',
+        'the Web shell or generated JavaScript asset is unavailable',
+        () => verifyWebBundle(client),
       )
     } else if (options.phase === 'before-restart') {
       await beforeRestart(options, reporter)
