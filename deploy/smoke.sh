@@ -249,11 +249,20 @@ check_tcp_bindings() {
 
   if [ "$(tcp_addresses 8080)" != '0100007F' ] || \
      [ "$(tcp_addresses 9090)" != '0100007F' ]; then
+    printf 'Unexpected web/controller TCP binds: 8080=%s 9090=%s\n' \
+      "$(tcp_addresses 8080)" "$(tcp_addresses 9090)" >&2
     record "tcp-bindings-$stage" 'fail' 'web or controller is not loopback-only'
     return 1
   fi
   for port in "${GATEWAY_PORTS[@]}"; do
-    if [ "$(tcp_addresses "$port")" != '00000000' ]; then
+    addresses=$(tcp_addresses "$port")
+    if [ -z "$addresses" ] || ! printf '%s\n' "$addresses" | awk '
+      $0 != "00000000" && $0 != "00000000000000000000000000000000" {
+        exit 1
+      }
+    '; then
+      printf 'Unexpected managed TCP bind: port=%s addresses=%s\n' \
+        "$port" "${addresses:-none}" >&2
       record "tcp-bindings-$stage" 'fail' 'a managed SOCKS port has the wrong TCP bind'
       return 1
     fi

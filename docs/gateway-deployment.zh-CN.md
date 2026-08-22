@@ -48,7 +48,20 @@ SOCKS 客户端 -> 10001–10010/tcp -> Mihomo -> 配置的节点
 
    不要使用 `latest`、裸 tag 或来源不明的镜像。
 
-4. 生成本次部署专用的三项 secret：
+4. 安装项目的最小 nftables 边界。固定的 Mihomo 二进制在 Linux 上可能用一个
+   双栈 socket 承载 `0.0.0.0`；以下规则只拒绝十个 SOCKS 端口的 IPv6 TCP 和
+   全部 UDP，不清空或替换 Docker、Fail2ban 及宿主已有规则：
+
+   ```sh
+   sudo install -d -m 0755 /etc/metacubexd-socks-gateway
+   sudo install -m 0644 firewall.nft /etc/metacubexd-socks-gateway/firewall.nft
+   sudo nft -c -f /etc/metacubexd-socks-gateway/firewall.nft
+   sudo install -m 0644 socks-gateway-firewall.service /etc/systemd/system/socks-gateway-firewall.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now socks-gateway-firewall.service
+   ```
+
+5. 生成本次部署专用的三项 secret：
 
    ```sh
    sh generate-secrets.sh
@@ -57,7 +70,7 @@ SOCKS 客户端 -> 10001–10010/tcp -> Mihomo -> 配置的节点
    脚本不会覆盖已有文件。管理员初始密码只显示一次，请立即保存到密码管理器。
    `gateway_master_key` 必须与加密数据一起备份；丢失后现有状态无法解密。
 
-5. 启动并检查服务：
+6. 启动并检查服务：
 
    ```sh
    docker compose pull
@@ -142,6 +155,7 @@ ss -lun | grep -E ':(1000[1-9]|10010)\b' && echo '发现意外 UDP 监听'
 
 - `8080` 和 `9090` 只出现在 `127.0.0.1`；
 - 只有已启用的 SOCKS 端口出现 TCP 监听；
+- IPv6 无法连接 `10001`–`10010`；`tcp6` 表中出现双栈 FD 本身不代表防火墙已放行；
 - `10001`–`10010` 没有 UDP 监听。
 
 ## 日常运维

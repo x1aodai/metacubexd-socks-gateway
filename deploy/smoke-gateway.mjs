@@ -13,6 +13,7 @@ const GATEWAY_PORTS = Array.from({ length: 10 }, (_, i) => 10001 + i)
 const BASE_URL = 'http://127.0.0.1:8080'
 const FAIL_CLOSED_CANARY_ADDRESS = [127, 0, 0, 2]
 const FAIL_CLOSED_CANARY_HOST = FAIL_CLOSED_CANARY_ADDRESS.join('.')
+const FAIL_CLOSED_CANARY_MARKER = Buffer.from('gateway-canary-reached')
 const BOUND_USERNAME = 'smoke-bound'
 const UNBOUND_USERNAME = 'smoke-unbound'
 const UNREACHABLE_NAMES = ['smoke-unreachable-a', 'smoke-unreachable-b']
@@ -280,6 +281,17 @@ async function expectAuth(port, username, password, expected, timeoutMs) {
   session.socket.destroy()
 }
 
+async function expectConnectionRejected(port, host, timeoutMs) {
+  let socket
+  try {
+    socket = await connectSocket(port, host, timeoutMs)
+  } catch {
+    return
+  }
+  socket.destroy()
+  throw new Error('unexpected TCP connection was accepted')
+}
+
 async function socksConnect(port, username, password, targetPort, timeoutMs) {
   const { socket, reader } = await socksAuth(
     port,
@@ -317,6 +329,16 @@ async function socksConnect(port, username, password, targetPort, timeoutMs) {
             : -1
     if (addressLength < 0) throw new Error('invalid SOCKS reply address')
     await reader.read(addressLength + 2)
+    let marker
+    try {
+      marker = await reader.read(FAIL_CLOSED_CANARY_MARKER.length)
+    } catch (error) {
+      if (error instanceof Error && error.message === 'socket read timeout')
+        throw error
+      return false
+    }
+    if (!marker.equals(FAIL_CLOSED_CANARY_MARKER))
+      throw new Error('SOCKS canary returned unexpected data')
     return true
   } finally {
     socket.destroy()
@@ -650,7 +672,7 @@ async function verifyFailClosed(reporter, boundPassword, timeoutMs) {
       let accepted = 0
       const canary = createServer((socket) => {
         accepted++
-        socket.end()
+        socket.end(FAIL_CLOSED_CANARY_MARKER)
       })
       await listen(canary, {
         host: FAIL_CLOSED_CANARY_HOST,
@@ -666,26 +688,44 @@ async function verifyFailClosed(reporter, boundPassword, timeoutMs) {
           FAIL_CLOSED_CANARY_HOST,
           timeoutMs,
         )
-        direct.end()
-        direct.destroy()
-        const directDeadline = Date.now() + timeoutMs
-        while (accepted < 1 && Date.now() < directDeadline) await delay(10)
+        try {
+          const marker = await new SocketReader(direct, timeoutMs).read(
+            FAIL_CLOSED_CANARY_MARKER.length,
+          )
+          if (!marker.equals(FAIL_CLOSED_CANARY_MARKER))
+            throw new Error('direct canary returned unexpected data')
+        } finally {
+          direct.destroy()
+        }
         if (accepted !== 1) throw new Error('direct canary was not reachable')
         const baseline = accepted
-        await socksConnect(
+        const reachedCanary = await socksConnect(
           GATEWAY_PORTS[0],
           BOUND_USERNAME,
           boundPassword,
           address.port,
           timeoutMs,
         )
-        await delay(200)
-        if (accepted !== baseline)
+        if (reachedCanary || accepted !== baseline)
           throw new Error('gateway reached the canary directly')
       } finally {
         await closeServer(canary)
       }
     },
+  )
+}
+
+async function verifyIpv6Rejected(reporter, stage, timeoutMs) {
+  await reporter.check(
+    `ipv6-socks-rejection-${stage}`,
+    `IPv6 SOCKS connections are rejected ${stage}`,
+    `an IPv6 SOCKS connection was accepted ${stage}`,
+    () =>
+      Promise.all(
+        GATEWAY_PORTS.map((port) =>
+          expectConnectionRejected(port, '::1', timeoutMs),
+        ),
+      ),
   )
 }
 
@@ -714,7 +754,7 @@ async function verifyRollback(
       if (!before || before.enabled !== false)
         throw new Error('port 10010 did not disable')
 
-      const conflict = createServer()
+      const conflict = createServer((socket) => socket.destroy())
       await listen(conflict, { host: '0.0.0.0', port: 10010, exclusive: true })
       try {
         const response = await client.request('/api/control/gateway/ports/10', {
@@ -838,6 +878,11 @@ async function beforeRestart(options, reporter) {
     unboundPassword,
     Math.min(options.timeoutMs, 5_000),
   )
+  await verifyIpv6Rejected(
+    reporter,
+    'before-restart',
+    Math.min(options.timeoutMs, 1_500),
+  )
   await verifyFailClosed(
     reporter,
     boundPassword,
@@ -907,6 +952,11 @@ async function afterRestart(options, reporter) {
         Math.min(options.timeoutMs, 5_000),
       )
     },
+  )
+  await verifyIpv6Rejected(
+    reporter,
+    'after-restart',
+    Math.min(options.timeoutMs, 1_500),
   )
 }
 

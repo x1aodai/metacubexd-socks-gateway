@@ -65,6 +65,8 @@ const envExample = read('deploy/.env.example')
 const caddy = read('deploy/Caddyfile.example')
 const nginx = read('deploy/nginx.conf.example')
 const secretGenerator = read('deploy/generate-secrets.sh')
+const firewall = read('deploy/firewall.nft')
+const firewallService = read('deploy/socks-gateway-firewall.service')
 const assets = read('packages/agent/src/kernel/assets.ts')
 const agentIndex = read('packages/agent/src/index.ts')
 const gatewayState = read('packages/agent/src/gateway-state.ts')
@@ -73,6 +75,42 @@ const publishWorkflow = read('.github/workflows/publish-container.yml')
 const releaseWorkflow = read('.github/workflows/release.yml')
 const dockerignore = read('.dockerignore')
 const gitignore = read('.gitignore')
+
+has(
+  firewall,
+  'table inet metacubexd_gateway',
+  'Firewall must use an isolated inet table',
+)
+has(
+  firewall,
+  'meta nfproto ipv6 tcp dport 10001-10010',
+  'Firewall must reject IPv6 access to the managed SOCKS ports',
+)
+has(
+  firewall,
+  'udp dport 10001-10010',
+  'Firewall must drop UDP access to the managed SOCKS ports',
+)
+lacks(
+  firewall,
+  'flush ruleset',
+  'Firewall must not flush rules owned by Docker or the host',
+)
+has(
+  firewallService,
+  'Before=docker.service',
+  'Firewall service must load before Docker',
+)
+has(
+  firewallService,
+  'ExecStartPre=-/usr/sbin/nft delete table inet metacubexd_gateway',
+  'Firewall service must replace only its own table',
+)
+has(
+  firewallService,
+  'ExecStart=/usr/sbin/nft -f /etc/metacubexd-socks-gateway/firewall.nft',
+  'Firewall service must load the installed project rules',
+)
 
 const nodeImage =
   'node:22.23.1-alpine3.24@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2'
