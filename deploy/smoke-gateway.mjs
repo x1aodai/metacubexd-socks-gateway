@@ -11,6 +11,8 @@ const REQUIRED_PORTS = [
 ]
 const GATEWAY_PORTS = Array.from({ length: 10 }, (_, i) => 10001 + i)
 const BASE_URL = 'http://127.0.0.1:8080'
+const FAIL_CLOSED_CANARY_ADDRESS = [127, 0, 0, 2]
+const FAIL_CLOSED_CANARY_HOST = FAIL_CLOSED_CANARY_ADDRESS.join('.')
 const BOUND_USERNAME = 'smoke-bound'
 const UNBOUND_USERNAME = 'smoke-unbound'
 const UNREACHABLE_NAMES = ['smoke-unreachable-a', 'smoke-unreachable-b']
@@ -293,10 +295,7 @@ async function socksConnect(port, username, password, targetPort, timeoutMs) {
         0x01,
         0x00,
         0x01,
-        127,
-        0,
-        0,
-        1,
+        ...FAIL_CLOSED_CANARY_ADDRESS,
         (targetPort >> 8) & 0xff,
         targetPort & 0xff,
       ]),
@@ -653,19 +652,27 @@ async function verifyFailClosed(reporter, boundPassword, timeoutMs) {
         accepted++
         socket.end()
       })
-      await listen(canary, { host: '127.0.0.1', port: 0, exclusive: true })
+      await listen(canary, {
+        host: FAIL_CLOSED_CANARY_HOST,
+        port: 0,
+        exclusive: true,
+      })
       try {
         const address = canary.address()
         if (!address || typeof address === 'string')
           throw new Error('canary did not bind')
-        const direct = await connectSocket(address.port, '127.0.0.1', timeoutMs)
+        const direct = await connectSocket(
+          address.port,
+          FAIL_CLOSED_CANARY_HOST,
+          timeoutMs,
+        )
         direct.end()
         direct.destroy()
         const directDeadline = Date.now() + timeoutMs
         while (accepted < 1 && Date.now() < directDeadline) await delay(10)
         if (accepted !== 1) throw new Error('direct canary was not reachable')
         const baseline = accepted
-        const connected = await socksConnect(
+        await socksConnect(
           GATEWAY_PORTS[0],
           BOUND_USERNAME,
           boundPassword,
@@ -673,7 +680,7 @@ async function verifyFailClosed(reporter, boundPassword, timeoutMs) {
           timeoutMs,
         )
         await delay(200)
-        if (connected || accepted !== baseline)
+        if (accepted !== baseline)
           throw new Error('gateway reached the canary directly')
       } finally {
         await closeServer(canary)
