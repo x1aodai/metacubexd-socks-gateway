@@ -38,6 +38,15 @@ Web 和 Controller 固定绑定回环地址。`9090` 仅供容器内受管组件
 
 ## Docker 快速开始
 
+发布版提供 `linux/amd64` 与 `linux/arm64` 镜像，可直接拉取：
+
+```sh
+docker pull ghcr.io/x1aodai/metacubexd-socks-gateway:1.272.0
+```
+
+版本标签适合快速获取；长期部署仍建议使用该版本在 GHCR 页面公布的不可变
+digest。
+
 部署前把镜像占位符替换为所选发行版公布的不可变 digest，不使用 `latest`：
 
 ```sh
