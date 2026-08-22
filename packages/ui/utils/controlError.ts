@@ -8,12 +8,8 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
-/**
- * Extract the useful diagnostic from a ky v2 HTTPError. H3 serializes
- * createError({ data: { error } }) as `HTTPError.data.data.error`; the generic
- * Error.message only says "Request failed with status code 400" and hides the
- * Mihomo validator output users need to repair their profile (#2121).
- */
+// H3 nests application errors under HTTPError.data.data; ordinary Error.message
+// only contains the HTTP status and would hide the useful gateway diagnostic.
 export function controlErrorMessage(error: unknown): string {
   if (isRecord(error)) {
     const responseData = error.data

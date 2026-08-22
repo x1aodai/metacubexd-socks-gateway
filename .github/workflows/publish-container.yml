@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
-      - gateway-v1.271.0
     tags:
       - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: container-${{ github.ref }}
@@ -18,7 +20,42 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify runtime contract
+        run: node deploy/verify-contract.mjs
+
+      - name: Verify distribution contract
+        run: node deploy/verify-distribution.mjs
+
   publish:
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,7 +63,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

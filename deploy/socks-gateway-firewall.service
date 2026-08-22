@@ -1,0 +1,13 @@
+[Unit]
+Description=MetaCubeXD SOCKS Gateway network boundary
+Before=docker.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/sbin/nft delete table inet metacubexd_gateway
+ExecStart=/usr/sbin/nft -f /etc/metacubexd-socks-gateway/firewall.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

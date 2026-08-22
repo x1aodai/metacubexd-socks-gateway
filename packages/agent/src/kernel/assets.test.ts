@@ -4,8 +4,8 @@ import { MIHOMO_VERSION, mihomoAsset } from './assets'
 const V = MIHOMO_VERSION
 
 describe('mIHOMO_VERSION', () => {
-  it('is pinned to v1.19.27 (overridable via env)', () => {
-    expect(MIHOMO_VERSION).toBe(process.env.MIHOMO_VERSION ?? 'v1.19.27')
+  it('is pinned to v1.19.29 (overridable via env)', () => {
+    expect(MIHOMO_VERSION).toBe(process.env.MIHOMO_VERSION ?? 'v1.19.29')
   })
 })
 

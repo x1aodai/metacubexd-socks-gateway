@@ -15,14 +15,6 @@
     "./kernel/assets": {
       "types": "./src/kernel/assets.ts",
       "import": "./src/kernel/assets.ts"
-    },
-    "./kernel/fetch-kernel": {
-      "types": "./src/kernel/fetch-kernel.ts",
-      "import": "./src/kernel/fetch-kernel.ts"
-    },
-    "./kernel/fetch-wintun": {
-      "types": "./src/kernel/fetch-wintun.ts",
-      "import": "./src/kernel/fetch-wintun.ts"
     }
   },
   "scripts": {
@@ -31,7 +23,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@metacubexd/config-editor": "workspace:*",
     "h3": "catalog:",
     "tree-kill": "catalog:",
     "yaml": "catalog:"

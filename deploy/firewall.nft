@@ -1,0 +1,8 @@
+table inet metacubexd_gateway {
+  chain input {
+    type filter hook input priority -10; policy accept;
+
+    meta nfproto ipv6 tcp dport 10001-10010 counter reject with tcp reset
+    udp dport 10001-10010 counter drop
+  }
+}

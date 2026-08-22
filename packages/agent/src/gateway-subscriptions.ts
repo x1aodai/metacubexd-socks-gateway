@@ -3,6 +3,7 @@ import type {
   FetchedSubscription,
   ImportPreview,
   MihomoProxy,
+  NormalizedNode,
 } from './subscription/index'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
@@ -15,11 +16,19 @@ import {
   encryptJson,
   loadOrCreateKey,
 } from './secure-store'
-import { fetchSubscription, previewSubscription } from './subscription/index'
+import {
+  fetchSubscription,
+  previewSubscription,
+  stableNodeId,
+} from './subscription/index'
 
 const DEFAULT_INTERVAL_MINUTES = 360
 const MIN_INTERVAL_MINUTES = 15
 const PREVIEW_TTL_MS = 10 * 60 * 1000
+const NO_VALID_NODES_MESSAGE = 'subscription returned no valid nodes'
+const NODE_COUNT_DROPPED_MESSAGE =
+  'subscription node count dropped; last-good retained'
+const REFRESH_FAILED_MESSAGE = 'subscription refresh failed'
 
 interface StoredSubscription {
   id: string
@@ -51,6 +60,17 @@ export interface GatewaySubscription {
   updatedAt: number
   lastSyncAt?: number
   lastError?: string
+}
+
+export interface GatewaySubscriptionRefreshItem {
+  id: string
+  ok: boolean
+  nodeCount: number
+  error?: string
+}
+
+export interface GatewaySubscriptionRefreshResult {
+  items: GatewaySubscriptionRefreshItem[]
 }
 
 export interface GatewayImportPreview {
@@ -98,6 +118,7 @@ export interface GatewaySubscriptionManager {
   ) => Promise<GatewaySubscription>
   delete: (id: string) => Promise<void>
   sync: (id: string) => Promise<GatewaySubscription>
+  refreshSubscriptions: () => Promise<GatewaySubscriptionRefreshResult>
   start: () => void
   stop: () => void
 }
@@ -188,26 +209,14 @@ export function createGatewaySubscriptionManager(
     record: StoredSubscription,
   ): Promise<GatewaySubscription> {
     try {
-      const fetched = await doFetch(record.url)
-      const parsed = previewSubscription(fetched.content)
-      if (parsed.nodes.length === 0)
-        throw new GatewayValidationError(
-          'subscription returned no valid nodes',
-          422,
-        )
-      if (record.nodeCount > 0 && parsed.nodes.length * 2 < record.nodeCount)
-        throw new GatewayValidationError(
-          `subscription node count dropped from ${record.nodeCount} to ${parsed.nodes.length}; last-good retained`,
-          409,
-        )
-      const nodes = parsed.nodes.map((node) => node.proxy)
+      const nodes = await fetchRecordNodes(record)
       if (record.enabled)
         await options.gateway.replaceNodeSource(
           `subscription:${record.id}`,
           nodes,
           'subscription.sync',
         )
-      record.nodes = nodes
+      record.nodes = rawProxies(nodes)
       record.nodeCount = nodes.length
       record.lastSyncAt = now()
       record.updatedAt = now()
@@ -218,8 +227,23 @@ export function createGatewaySubscriptionManager(
       record.lastError = safeError(error)
       record.updatedAt = now()
       await persist(state)
-      throw error
+      throw publicSyncError(error)
     }
+  }
+
+  async function fetchRecordNodes(
+    record: StoredSubscription,
+  ): Promise<NormalizedNode[]> {
+    const fetched = await doFetch(record.url)
+    const parsed = previewSubscription(fetched.content)
+    if (parsed.nodes.length === 0)
+      throw new GatewayValidationError(NO_VALID_NODES_MESSAGE, 422)
+    if (record.nodeCount > 0 && parsed.nodes.length * 2 < record.nodeCount)
+      throw new GatewayValidationError(
+        `subscription node count dropped from ${record.nodeCount} to ${parsed.nodes.length}; last-good retained`,
+        409,
+      )
+    return parsed.nodes
   }
 
   return {
@@ -250,9 +274,7 @@ export function createGatewaySubscriptionManager(
             'import contains no valid nodes',
             422,
           )
-        const gateway = await options.gateway.appendImportedNodes(
-          parsed.nodes.map((node) => node.proxy),
-        )
+        const gateway = await options.gateway.appendImportedNodes(parsed.nodes)
         return { imported: parsed.nodes.length, gateway }
       })
     },
@@ -303,15 +325,16 @@ export function createGatewaySubscriptionManager(
         if (input.enabled !== undefined) record.enabled = Boolean(input.enabled)
         record.updatedAt = now()
         if (wasEnabled && !record.enabled) {
-          await options.gateway.removeNodeSource(
+          await options.gateway.replaceNodeSource(
             `subscription:${record.id}`,
+            [],
             'subscription.disable',
           )
         } else if (!wasEnabled && record.enabled) {
           if (record.nodes.length > 0)
             await options.gateway.replaceNodeSource(
               `subscription:${record.id}`,
-              record.nodes,
+              normalizeStoredProxies(record.nodes),
               'subscription.enable',
             )
           try {
@@ -338,12 +361,11 @@ export function createGatewaySubscriptionManager(
         const index = state.items.findIndex((item) => item.id === id)
         if (index === -1)
           throw new GatewayValidationError('subscription not found', 404)
-        const [record] = state.items.splice(index, 1)
-        if (record?.enabled)
-          await options.gateway.removeNodeSource(
-            `subscription:${id}`,
-            'subscription.delete',
-          )
+        state.items.splice(index, 1)
+        await options.gateway.removeNodeSource(
+          `subscription:${id}`,
+          'subscription.delete',
+        )
         await persist(state)
       })
     },
@@ -354,6 +376,73 @@ export function createGatewaySubscriptionManager(
         if (!record)
           throw new GatewayValidationError('subscription not found', 404)
         return syncRecord(state, record)
+      })
+    },
+    refreshSubscriptions() {
+      return transaction(async () => {
+        const state = structuredClone(await load())
+        const records = state.items.filter(({ enabled }) => enabled)
+        type PreparedRefresh =
+          | { record: StoredSubscription; nodes: NormalizedNode[] }
+          | { record: StoredSubscription; error: unknown }
+        const prepared: PreparedRefresh[] = await Promise.all(
+          records.map(async (record): Promise<PreparedRefresh> => {
+            try {
+              return { record, nodes: await fetchRecordNodes(record) }
+            } catch (error) {
+              return { record, error }
+            }
+          }),
+        )
+        const successes = prepared.filter(
+          (
+            item,
+          ): item is {
+            record: StoredSubscription
+            nodes: NormalizedNode[]
+          } => 'nodes' in item,
+        )
+        let applyError: unknown
+        if (successes.length > 0) {
+          try {
+            await options.gateway.replaceNodeSources(
+              successes.map(({ record, nodes }) => ({
+                sourceId: `subscription:${record.id}`,
+                nodes,
+              })),
+              'subscriptions.refresh',
+            )
+          } catch (error) {
+            applyError = error
+          }
+        }
+
+        const items = prepared.map((item): GatewaySubscriptionRefreshItem => {
+          const error = 'error' in item ? item.error : applyError
+          if (error === undefined && 'nodes' in item) {
+            item.record.nodes = rawProxies(item.nodes)
+            item.record.nodeCount = item.nodes.length
+            item.record.lastSyncAt = now()
+            item.record.updatedAt = now()
+            item.record.lastError = undefined
+            return {
+              id: item.record.id,
+              ok: true,
+              nodeCount: item.record.nodeCount,
+            }
+          }
+          const message = safeError(error)
+          item.record.lastError = message
+          item.record.updatedAt = now()
+          return {
+            id: item.record.id,
+            ok: false,
+            nodeCount: item.record.nodeCount,
+            error: message,
+          }
+        })
+        await persist(state)
+        return { items }
       })
     },
     start() {
@@ -390,8 +479,23 @@ function publicSubscription(record: StoredSubscription): GatewaySubscription {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     lastSyncAt: record.lastSyncAt,
-    lastError: record.lastError,
+    lastError:
+      record.lastError === undefined
+        ? undefined
+        : publicStoredError(record.lastError),
   }
+}
+
+function normalizeStoredProxies(proxies: MihomoProxy[]): NormalizedNode[] {
+  return proxies.map((proxy) => ({
+    id: stableNodeId(proxy),
+    originalName: proxy.name,
+    proxy: structuredClone(proxy),
+  }))
+}
+
+function rawProxies(nodes: NormalizedNode[]): MihomoProxy[] {
+  return nodes.map(({ proxy }) => structuredClone(proxy))
 }
 
 function maskUrl(raw: string): string {
@@ -438,6 +542,32 @@ function validateUrl(raw: string): string {
 }
 
 function safeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/https?:\/\/\S+/gi, '[REDACTED URL]').slice(0, 500)
+  if (error instanceof GatewayValidationError) {
+    if (error.statusCode === 422 && error.message === NO_VALID_NODES_MESSAGE)
+      return NO_VALID_NODES_MESSAGE
+    if (
+      error.statusCode === 409 &&
+      error.message.startsWith('subscription node count dropped from ')
+    )
+      return NODE_COUNT_DROPPED_MESSAGE
+  }
+  return REFRESH_FAILED_MESSAGE
+}
+
+function publicStoredError(message: string): string {
+  if (
+    message === NO_VALID_NODES_MESSAGE ||
+    message === NODE_COUNT_DROPPED_MESSAGE ||
+    message === REFRESH_FAILED_MESSAGE
+  )
+    return message
+  return REFRESH_FAILED_MESSAGE
+}
+
+function publicSyncError(error: unknown): GatewayValidationError {
+  return new GatewayValidationError(
+    safeError(error),
+    error instanceof GatewayValidationError ? error.statusCode : 502,
+    error instanceof GatewayValidationError ? error.details : undefined,
+  )
 }

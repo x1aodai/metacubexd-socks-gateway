@@ -21,7 +21,6 @@ write_secret() {
 admin_password="$(openssl rand -base64 24 | tr -d '\n')"
 write_secret admin_password "$admin_password"
 write_secret gateway_master_key "$(openssl rand -hex 32)"
-write_secret control_token "$(openssl rand -hex 32)"
 write_secret clash_secret "$(openssl rand -hex 32)"
 
 printf '\nInitial administrator password (shown once):\n%s\n\n' "$admin_password"

@@ -33,15 +33,12 @@ export async function loadOrCreateKey(
   dataDir: string,
   explicit?: string,
 ): Promise<Buffer> {
-  if (explicit) return createHash('sha256').update(explicit).digest()
-  const path = join(dataDir, '.gateway-master-key')
   try {
-    const value = await readFile(path)
-    if (value.length === 32) return value
-    throw new Error('gateway master key has an invalid length')
+    return await loadExistingKey(dataDir, explicit)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  const path = join(dataDir, '.gateway-master-key')
   await mkdir(dataDir, { recursive: true })
   const value = randomBytes(32)
   try {
@@ -55,9 +52,20 @@ export async function loadOrCreateKey(
     return value
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-      return readFile(path)
+      return loadExistingKey(dataDir)
     throw error
   }
+}
+
+export async function loadExistingKey(
+  dataDir: string,
+  explicit?: string,
+): Promise<Buffer> {
+  if (explicit) return createHash('sha256').update(explicit).digest()
+  const path = join(dataDir, '.gateway-master-key')
+  const value = await readFile(path)
+  if (value.length === 32) return value
+  throw new Error('gateway master key has an invalid length')
 }
 
 export function encryptJson(value: unknown, key: Buffer): string {

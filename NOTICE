@@ -1,0 +1,34 @@
+MetaCubeXD SOCKS Gateway notices
+================================
+
+This distribution contains software derived from MetaCubeXD.
+
+Shared MetaCubeXD upstream
+--------------------------
+
+Project: MetaCubeXD
+Source: https://github.com/MetaCubeX/metacubexd
+Shared upstream commit: c4622599d0a597378729a91c3b7f76c5d9803831
+License: MIT; see the repository-root LICENSE file.
+
+SOCKS Gateway fork
+------------------
+
+Project: metacubexd-socks-gateway
+Source: https://github.com/x1aodai/metacubexd-socks-gateway
+Fast-MVP implementation baseline:
+b69d26fe1e4129ff649642875655b9ec83e7dc84
+
+The fast-MVP baseline identifies the state of this fork from which the focused
+gateway work proceeded. It is not the shared MetaCubeXD upstream attribution.
+This fork substantially narrows the product to an authenticated, fixed-port
+SOCKS gateway and its four-page Web console.
+
+Mihomo
+------
+
+The container distribution includes the unmodified Mihomo v1.19.29 executable.
+Mihomo is a separate project licensed under GNU GPL version 3. Its license text
+is in third_party/mihomo/LICENSE and exact source/acquisition information is in
+third_party/mihomo/SOURCE.md.
+
