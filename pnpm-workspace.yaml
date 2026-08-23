@@ -4,35 +4,35 @@ packages:
   - 'apps/server'
 
 catalog:
-  '@antfu/eslint-config': 9.2.0
-  '@commitlint/config-conventional': 21.2.0
+  '@antfu/eslint-config': 9.3.0
+  '@commitlint/config-conventional': 21.2.2
   '@prettier/plugin-oxc': 0.2.2
   '@tabler/icons-vue': 3.46.0
   '@tailwindcss/vite': 4.3.3
-  '@types/node': 26.1.2
+  '@types/node': 26.2.0
   '@vitejs/plugin-vue': 6.0.8
-  '@vue/test-utils': 2.4.6
-  commitlint: 21.2.1
-  daisyui: 5.7.4
-  eslint: 10.8.0
+  '@vue/test-utils': 2.4.11
+  commitlint: 21.2.2
+  daisyui: 5.7.19
+  eslint: 10.8.1
   h3: 1.15.11
   husky: 9.1.7
-  jsdom: 30.0.0
+  jsdom: 30.0.1
   ky: 2.0.2
-  lint-staged: 17.2.0
-  nitropack: 2.12.6
-  nuxt: 4.5.1
-  playwright: 1.62.0
+  lint-staged: 17.3.0
+  nitropack: 2.13.4
+  nuxt: 4.5.2
+  playwright: 1.62.1
   prettier: 3.9.6
   prettier-plugin-tailwindcss: 0.8.1
   tailwindcss: 4.3.3
   tree-kill: 1.2.2
-  typescript: 6.0.3
-  vite: 8.1.5
-  vitest: 4.1.10
-  vue: 3.5.40
+  typescript: 7.0.2
+  vite: 8.2.2
+  vitest: 4.1.11
+  vue: 3.5.41
   vue-router: 5.2.0
-  vue-tsc: 3.3.8
+  vue-tsc: 3.3.10
   yaml: 2.9.0
 
 overrides:
